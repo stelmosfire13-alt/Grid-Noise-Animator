@@ -32,16 +32,24 @@
     .layout {
       display: grid;
       grid-template-columns: 264px 1fr;
+      grid-template-rows: auto 1fr;
       gap: 14px;
       align-items: start;
     }
+    /* デスクトップ: upload-card と sidebar を左列に積み、preview は右列で両行にまたがる */
+    .upload-card  { grid-column: 1; grid-row: 1; }
+    .sidebar      { grid-column: 1; grid-row: 2; }
+    .preview-pane { grid-column: 2; grid-row: 1 / 3; }
+
     @media (max-width: 680px) {
       body { padding: 10px 12px; }
 
-      .layout { grid-template-columns: 1fr; }
+      .layout { grid-template-columns: 1fr; grid-template-rows: none; }
 
-      /* プレビューをコントロールより先に表示 */
-      .preview-pane { order: -1; min-height: 200px; }
+      /* モバイル順: 画像を選択 → プレビュー → 設定 */
+      .upload-card  { order: 1; }
+      .preview-pane { order: 2; min-height: 200px; }
+      .sidebar      { order: 3; }
       #mainCanvas   { max-height: 48vh; }
 
       /* タッチターゲットを広げる */
@@ -195,19 +203,19 @@
   </header>
 
   <div class="layout">
-    <div class="sidebar">
-
-      <div class="card">
-        <div class="card-title">画像を選択</div>
-        <div class="dz" id="dz">
-          <input type="file" id="fileIn" accept="image/*">
-          <img id="dzThumb" class="dz-thumb" alt="">
-          <div class="dz-inner">
-            <div>クリックまたはドラッグ&amp;ドロップ</div>
-            <div class="dz-name" id="dzName"></div>
-          </div>
+    <div class="card upload-card">
+      <div class="card-title">画像を選択</div>
+      <div class="dz" id="dz">
+        <input type="file" id="fileIn" accept="image/*">
+        <img id="dzThumb" class="dz-thumb" alt="">
+        <div class="dz-inner">
+          <div>クリックまたはドラッグ&amp;ドロップ</div>
+          <div class="dz-name" id="dzName"></div>
         </div>
       </div>
+    </div><!-- /upload-card -->
+
+    <div class="sidebar">
 
       <div class="card">
         <div class="card-title">グリッド設定</div>
@@ -287,6 +295,7 @@
       </div>
 
     </div><!-- /sidebar -->
+
 
     <div class="preview-pane">
       <span class="preview-empty" id="emptyMsg">画像を読み込むとここに表示されます</span>
@@ -676,13 +685,32 @@
       // ── MP4: WebCodecs VideoEncoder + mp4-muxer ───────────────────────────
       if (typeof VideoEncoder === 'undefined' || typeof Muxer === 'undefined') {
         stopAll();
-        setStatus('MP4出力には Chrome/Edge とインターネット接続が必要です。');
+        setStatus('MP4出力には Chrome/Edge 120以降とインターネット接続が必要です。');
+        return;
+      }
+
+      // H.264 は偶数解像度必須
+      const encW = canvas.width  - (canvas.width  % 2);
+      const encH = canvas.height - (canvas.height % 2);
+
+      // 対応コーデックを順番に試す
+      const codecCandidates = ['avc1.42002a', 'avc1.42001f', 'avc1.420029'];
+      let chosenCodec = null;
+      for (const c of codecCandidates) {
+        const r = await VideoEncoder.isConfigSupported(
+          { codec: c, width: encW, height: encH, bitrate: 8_000_000, framerate: fps }
+        ).catch(() => ({ supported: false }));
+        if (r.supported) { chosenCodec = c; break; }
+      }
+      if (!chosenCodec) {
+        stopAll();
+        setStatus('H.264エンコードがサポートされていません。WebM をお試しください。');
         return;
       }
 
       const muxer = new Muxer({
         target: new ArrayBufferTarget(),
-        video: { codec: 'avc', width: canvas.width, height: canvas.height, frameRate: fps },
+        video: { codec: 'avc', width: encW, height: encH },
         fastStart: 'in-memory'
       });
 
@@ -691,43 +719,40 @@
         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
         error:  e => { encError = e; }
       });
-
-      const cfg = { codec: 'avc1.42001f', width: canvas.width, height: canvas.height,
-                    bitrate: 10_000_000, framerate: fps };
-      const ok = await VideoEncoder.isConfigSupported(cfg).catch(() => ({ supported: false }));
-      if (!ok.supported) {
-        stopAll();
-        setStatus('H.264エンコードがこの環境でサポートされていません。WebMをお使いください。');
-        return;
-      }
-      encoder.configure(cfg);
+      encoder.configure({ codec: chosenCodec, width: encW, height: encH,
+                          bitrate: 8_000_000, framerate: fps });
 
       const frameDur = Math.round(1_000_000 / fps);
-      let frame = 0;
 
-      expInterval = setInterval(() => {
-        if (!exporting || encError) { clearInterval(expInterval); expInterval = null; return; }
-        drawNoise();
+      // setInterval ではなく async ループ → エンコーダーキュー溢れを防ぐ
+      (async () => {
+        for (let frame = 0; frame < total; frame++) {
+          if (!exporting || encError) break;
 
-        const vf = new VideoFrame(canvas, { timestamp: frame * frameDur, duration: frameDur });
-        encoder.encode(vf, { keyFrame: frame % (fps * 2) === 0 });
-        vf.close();
+          drawNoise();
+          const vf = new VideoFrame(canvas, { timestamp: frame * frameDur, duration: frameDur });
+          encoder.encode(vf, { keyFrame: frame % (fps * 2) === 0 });
+          vf.close();
 
-        frame++;
-        progFill.style.width = (frame / total * 100).toFixed(1) + '%';
-        setStatus(`MP4 録画中… ${frame} / ${total} フレーム  (${(frame / fps).toFixed(1)} 秒)`);
+          progFill.style.width = ((frame + 1) / total * 100).toFixed(1) + '%';
+          setStatus(`MP4 録画中… ${frame + 1} / ${total} フレーム  (${((frame + 1) / fps).toFixed(1)} 秒)`);
 
-        if (frame >= total) {
-          clearInterval(expInterval); expInterval = null;
-          setStatus('エンコード処理中...');
-          encoder.flush().then(() => {
-            encoder.close();
-            muxer.finalize();
-            exporting = false;
-            exportDone(new Blob([muxer.target.buffer], { type: 'video/mp4' }), 'mp4', fps, dur);
-          }).catch(e => { stopAll(); setStatus('エンコードエラー: ' + e.message); });
+          // 15フレームごとにブラウザへ制御を返してUIを生かす
+          if (frame % 15 === 14) await new Promise(r => setTimeout(r, 0));
         }
-      }, 1000 / fps);
+
+        if (encError) { stopAll(); setStatus('エンコードエラー: ' + encError.message); return; }
+        if (!exporting) return;
+
+        setStatus('エンコード処理中...');
+        await encoder.flush().catch(e => { encError = e; });
+        if (encError) { stopAll(); setStatus('エンコードエラー: ' + encError.message); return; }
+
+        encoder.close();
+        muxer.finalize();
+        exporting = false;
+        exportDone(new Blob([muxer.target.buffer], { type: 'video/mp4' }), 'mp4', fps, dur);
+      })();
 
     } else {
       // ── WebM: MediaRecorder ───────────────────────────────────────────────
