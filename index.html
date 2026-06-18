@@ -253,6 +253,15 @@
         <div class="field-label">彩度の変動幅 <em id="satV">± 30%</em></div>
         <input type="range" id="satS" min="0" max="50" value="30">
       </div>
+      <div class="field" style="margin-top:4px">
+        <div class="field-label">
+          <span>ぼかし <em id="blurV">4px</em></span>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;color:var(--muted)">
+            <input type="checkbox" id="blurChk" style="width:13px;height:13px">ON
+          </label>
+        </div>
+        <input type="range" id="blurS" min="1" max="20" value="4">
+      </div>
       <div class="field" style="margin-top:10px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="checkbox" id="mlGuard" checked style="width:14px;height:14px">
@@ -447,6 +456,10 @@ function buildGIF(w, h, frames, delayCs) {
   const litS     = document.getElementById('litS');
   const satS     = document.getElementById('satS');
   const mlGuard  = document.getElementById('mlGuard');
+  const blurChk  = document.getElementById('blurChk');
+  const blurS    = document.getElementById('blurS');
+
+  blurS.addEventListener('input', () => { document.getElementById('blurV').textContent = blurS.value + 'px'; });
 
   hueS.addEventListener('input', () => { document.getElementById('hueV').textContent = `± ${hueS.value}°`; });
   litS.addEventListener('input', () => { document.getElementById('litV').textContent = `± ${litS.value}%`; });
@@ -486,6 +499,7 @@ function buildGIF(w, h, frames, delayCs) {
   let expInterval = null;
 
   let fixedOverlay = null;  // Float32Array [r,g,b,...] fixed adversarial pattern per pixel
+  let blurOffscreen = null, blurOCtx = null;  // ぼかし用オフスクリーンキャンバス
 
   // ── Color math ────────────────────────────────────────────────────────────
   function rgbToHsl(r, g, b) {  // r,g,b ∈ [0,1]  →  [h∈[0,360), s∈[0,100], l∈[0,100]]
@@ -614,6 +628,9 @@ function buildGIF(w, h, frames, delayCs) {
 
     // Fixed adversarial overlay (image-specific, survives frame averaging)
     fixedOverlay = generateOverlay(pixels, w, h);
+    blurOffscreen = document.createElement('canvas');
+    blurOffscreen.width = w; blurOffscreen.height = h;
+    blurOCtx = blurOffscreen.getContext('2d');
 
     // Reusable output buffer (alpha always 255)
     outBuf = new Uint8ClampedArray(w * h * 4);
@@ -718,6 +735,13 @@ function buildGIF(w, h, frames, delayCs) {
     }
 
     ctx.putImageData(imgDataObj, 0, 0);
+
+    // ぼかし: オフスクリーンにblur付きで描いて主キャンバスに戻す
+    if (blurChk.checked && blurOffscreen) {
+      blurOCtx.filter = `blur(${blurS.value}px)`;
+      blurOCtx.drawImage(canvas, 0, 0);
+      ctx.drawImage(blurOffscreen, 0, 0);
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -813,7 +837,11 @@ function buildGIF(w, h, frames, delayCs) {
         for (let f = 0; f < gifTotal; f++) {
           if (!exporting) return;
           drawNoise();
-          frames.push(quantizeToGif(outBuf));  // outBuf は現フレームの RGBA
+          // ぼかし有効時はキャンバスから読み直す（ぼかし後のピクセルを使う）
+          const src = (blurChk.checked && blurOffscreen)
+            ? ctx.getImageData(0, 0, imgW, imgH).data
+            : outBuf;
+          frames.push(quantizeToGif(src));
           progFill.style.width = ((f + 1) / gifTotal * 100).toFixed(1) + '%';
           setStatus(`GIF 録画中… ${f + 1} / ${gifTotal} フレーム`);
           if (f % 10 === 9) await new Promise(r => setTimeout(r, 0));
