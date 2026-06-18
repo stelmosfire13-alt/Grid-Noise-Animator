@@ -32,24 +32,38 @@
     .layout {
       display: grid;
       grid-template-columns: 264px 1fr;
-      grid-template-rows: auto 1fr;
       gap: 14px;
       align-items: start;
     }
-    /* デスクトップ: upload-card と sidebar を左列に積み、preview は右列で両行にまたがる */
-    .upload-card  { grid-column: 1; grid-row: 1; }
-    .sidebar      { grid-column: 1; grid-row: 2; }
-    .preview-pane { grid-column: 2; grid-row: 1 / 3; }
+    /* デスクトップ: 左列に各カードを積み、preview は右列全体 */
+    .upload-card,
+    .grid-card,
+    .fx-card,
+    .ctrl-card,
+    .out-card    { grid-column: 1; }
+    .preview-pane { grid-column: 2; grid-row: 1 / 99; }
 
     @media (max-width: 680px) {
       body { padding: 10px 12px; }
 
-      .layout { grid-template-columns: 1fr; grid-template-rows: none; }
+      .layout { grid-template-columns: 1fr; }
 
-      /* デスクトップの明示的な grid 配置をリセットしてから order で並べ直す */
-      .upload-card  { grid-column: auto; grid-row: auto; order: 1; }
-      .preview-pane { grid-column: auto; grid-row: auto; order: 2; min-height: 200px; }
-      .sidebar      { grid-column: auto; grid-row: auto; order: 3; }
+      /* 全カードの grid 配置をリセットして order で並べ直す */
+      .upload-card,
+      .grid-card,
+      .fx-card,
+      .ctrl-card,
+      .out-card,
+      .preview-pane { grid-column: auto; grid-row: auto; }
+
+      /* モバイル順: 画像選択 → プレビュー → 再生制御 → グリッド → エフェクト → 出力 */
+      .upload-card  { order: 1; }
+      .preview-pane { order: 2; min-height: 200px; }
+      .ctrl-card    { order: 3; }
+      .grid-card    { order: 4; }
+      .fx-card      { order: 5; }
+      .out-card     { order: 6; }
+
       #mainCanvas   { max-height: 48vh; }
 
       /* タッチターゲットを広げる */
@@ -66,8 +80,6 @@
       /* ML保護チェックボックスのラベルを大きく */
       #mlGuard { width: 18px; height: 18px; }
     }
-
-    .sidebar { display: flex; flex-direction: column; gap: 10px; }
 
     .card {
       background: var(--surface);
@@ -214,86 +226,82 @@
       </div>
     </div><!-- /upload-card -->
 
-    <div class="sidebar">
+    <div class="card grid-card">
+      <div class="card-title">グリッド設定</div>
+      <div class="num-row">
+        <label>分割数</label>
+        <select id="gridSel">
+          <option value="16">16 × 16</option>
+          <option value="32" selected>32 × 32</option>
+          <option value="64">64 × 64</option>
+          <option value="128">128 × 128</option>
+        </select>
+      </div>
+    </div>
 
-      <div class="card">
-        <div class="card-title">グリッド設定</div>
-        <div class="num-row">
-          <label>分割数</label>
-          <select id="gridSel">
-            <option value="16">16 × 16</option>
-            <option value="32" selected>32 × 32</option>
-            <option value="64">64 × 64</option>
-            <option value="128">128 × 128</option>
-          </select>
+    <div class="card fx-card">
+      <div class="card-title">エフェクト設定</div>
+      <div class="field">
+        <div class="field-label">色相の変動幅 <em id="hueV">± 120°</em></div>
+        <input type="range" id="hueS" min="0" max="180" value="120">
+      </div>
+      <div class="field">
+        <div class="field-label">明度の変動幅 <em id="litV">± 40%</em></div>
+        <input type="range" id="litS" min="0" max="50" value="40">
+      </div>
+      <div class="field">
+        <div class="field-label">彩度の変動幅 <em id="satV">± 30%</em></div>
+        <input type="range" id="satS" min="0" max="50" value="30">
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="mlGuard" checked style="width:14px;height:14px">
+          <span>ML学習保護（高周波パターン重畳）</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          フレーム平均後も残る固定パターンを埋め込みます。人間には不可視ですがAI特徴抽出を乱します。
         </div>
       </div>
+    </div>
 
-      <div class="card">
-        <div class="card-title">エフェクト設定</div>
-        <div class="field">
-          <div class="field-label">色相の変動幅 <em id="hueV">± 120°</em></div>
-          <input type="range" id="hueS" min="0" max="180" value="120">
-        </div>
-        <div class="field">
-          <div class="field-label">明度の変動幅 <em id="litV">± 40%</em></div>
-          <input type="range" id="litS" min="0" max="50" value="40">
-        </div>
-        <div class="field">
-          <div class="field-label">彩度の変動幅 <em id="satV">± 30%</em></div>
-          <input type="range" id="satS" min="0" max="50" value="30">
-        </div>
-        <div class="field" style="margin-top:10px">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
-            <input type="checkbox" id="mlGuard" checked style="width:14px;height:14px">
-            <span>ML学習保護（高周波パターン重畳）</span>
-          </label>
-          <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
-            フレーム平均後も残る固定パターンを埋め込みます。人間には不可視ですがAI特徴抽出を乱します。
-          </div>
-        </div>
+    <div class="card ctrl-card">
+      <div class="card-title">プレビュー制御</div>
+      <div class="num-row" style="margin-bottom:10px">
+        <label>FPS</label>
+        <input type="number" id="previewFps" value="60" min="1" max="240">
+        <span>fps</span>
       </div>
-
-      <div class="card">
-        <div class="card-title">プレビュー制御</div>
-        <div class="num-row" style="margin-bottom:10px">
-          <label>FPS</label>
-          <input type="number" id="previewFps" value="60" min="1" max="240">
-          <span>fps</span>
-        </div>
-        <div class="btn-row">
-          <button class="btn btn-blue" id="playBtn"  disabled>▶ 再生</button>
-          <button class="btn btn-gray" id="pauseBtn" disabled>■ 停止</button>
-        </div>
+      <div class="btn-row">
+        <button class="btn btn-blue" id="playBtn"  disabled>▶ 再生</button>
+        <button class="btn btn-gray" id="pauseBtn" disabled>■ 停止</button>
       </div>
+    </div>
 
-      <div class="card">
-        <div class="card-title">動画として出力</div>
-        <div class="num-row">
-          <label>フレームレート</label>
-          <input type="number" id="fpsIn" value="60" min="1" max="60">
-          <span>fps</span>
-        </div>
-        <div class="num-row">
-          <label>録画時間</label>
-          <input type="number" id="durIn" value="5"  min="1" max="120">
-          <span>秒</span>
-        </div>
-        <div class="num-row">
-          <label>出力形式</label>
-          <select id="formatSel">
-            <option value="webm">WebM (VP9)</option>
-            <option value="gif" selected>GIF アニメ</option>
-          </select>
-        </div>
-        <button class="btn btn-blue btn-full" id="expBtn" disabled>動画を出力</button>
-        <div class="progress" id="prog">
-          <div class="progress-fill" id="progFill"></div>
-        </div>
-        <div class="status" id="st">画像を読み込んでください</div>
+    <div class="card out-card">
+      <div class="card-title">動画として出力</div>
+      <div class="num-row">
+        <label>フレームレート</label>
+        <input type="number" id="fpsIn" value="60" min="1" max="60">
+        <span>fps</span>
       </div>
-
-    </div><!-- /sidebar -->
+      <div class="num-row">
+        <label>録画時間</label>
+        <input type="number" id="durIn" value="5"  min="1" max="120">
+        <span>秒</span>
+      </div>
+      <div class="num-row">
+        <label>出力形式</label>
+        <select id="formatSel">
+          <option value="webm">WebM (VP9)</option>
+          <option value="gif" selected>GIF アニメ</option>
+        </select>
+      </div>
+      <button class="btn btn-blue btn-full" id="expBtn" disabled>動画を出力</button>
+      <div class="progress" id="prog">
+        <div class="progress-fill" id="progFill"></div>
+      </div>
+      <div class="status" id="st">画像を読み込んでください</div>
+    </div>
 
 
     <div class="preview-pane">
