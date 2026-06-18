@@ -859,12 +859,19 @@ function buildGIF(w, h, frames, delayCs) {
 })();
 </script>
 
-<!-- ↓ アクセスカウンター: YOUR-PAGE-URL をホスティング先の実際のURLに変更してください -->
 <footer style="text-align:center; padding:18px 0 14px; margin-top:10px;">
-  <a href="https://hits.seeyoufarm.com" target="_blank" rel="noopener">
-    <img src="https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgrid-noise-animator.vercel.app%2Findex.html&count_bg=%236c8ef5&title_bg=%2316161a&icon=&icon_color=%23dde0f0&title=アクセス&edge_flat=true"
-         alt="アクセスカウンター" style="height:20px; vertical-align:middle;">
-  </a>
+  <img id="accessCounter" alt="アクセスカウンター" style="height:20px; vertical-align:middle; opacity:0; transition:opacity 0.3s;">
 </footer>
+<script>
+  (function () {
+    const img = document.getElementById('accessCounter');
+    const pageUrl = encodeURIComponent('https://grid-noise-animator.vercel.app/index.html');
+    img.src = 'https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=' + pageUrl
+            + '&count_bg=%236c8ef5&title_bg=%2316161a&icon=&icon_color=%23dde0f0'
+            + '&title=%E3%82%A2%E3%82%AF%E3%82%BB%E3%82%B9&edge_flat=true';
+    img.onload  = () => { img.style.opacity = '1'; };
+    img.onerror = () => { img.style.display = 'none'; };
+  })();
+</script>
 </body>
 </html>
