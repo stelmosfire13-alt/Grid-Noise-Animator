@@ -68,7 +68,7 @@
 
       /* タッチターゲットを広げる */
       .btn { padding: 11px 14px; font-size: 0.88rem; min-height: 44px; }
-      input[type=range] { height: 28px; }
+      input[type=range] { height: 28px; touch-action: none; }
       input[type=number],
       select { font-size: 1rem; padding: 6px 8px; }
 
@@ -472,6 +472,32 @@ function buildGIF(w, h, frames, delayCs) {
 
   blurS.addEventListener('input', () => { document.getElementById('blurV').textContent = blurS.value + 'px'; });
   warpS.addEventListener('input', () => { document.getElementById('warpV').textContent = warpS.value + 'px'; });
+
+  (function () {
+    const MIN_DRAG = 10;
+    document.querySelectorAll('input[type=range]').forEach(slider => {
+      let pid = null, startX, startY, active;
+      slider.addEventListener('pointerdown', e => {
+        if (e.pointerType !== 'touch') return;
+        e.preventDefault();
+        slider.setPointerCapture(e.pointerId);
+        pid = e.pointerId; startX = e.clientX; startY = e.clientY; active = false;
+      });
+      slider.addEventListener('pointermove', e => {
+        if (e.pointerId !== pid) return;
+        const dx = e.clientX - startX, dy = e.clientY - startY;
+        if (!active) {
+          if (Math.abs(dx) < MIN_DRAG || Math.abs(dy) > Math.abs(dx)) return;
+          active = true;
+        }
+        const r = slider.getBoundingClientRect();
+        const v = Math.round(+slider.min + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (+slider.max - +slider.min));
+        if (+slider.value !== v) { slider.value = v; slider.dispatchEvent(new Event('input')); }
+      });
+      slider.addEventListener('pointerup',     e => { if (e.pointerId === pid) pid = null; });
+      slider.addEventListener('pointercancel', e => { if (e.pointerId === pid) pid = null; });
+    });
+  })();
 
   hueS.addEventListener('input', () => { document.getElementById('hueV').textContent = `± ${hueS.value}°`; });
   litS.addEventListener('input', () => { document.getElementById('litV').textContent = `± ${litS.value}%`; });
