@@ -291,10 +291,9 @@
 
     <div class="card ctrl-card">
       <div class="card-title">プレビュー制御</div>
-      <div class="num-row" style="margin-bottom:10px">
-        <label>FPS</label>
-        <input type="number" id="previewFps" value="60" min="1" max="240">
-        <span>fps</span>
+      <div class="field" style="margin-bottom:10px">
+        <div class="field-label">FPS <em id="fpsV">24 fps</em></div>
+        <input type="range" id="previewFps" min="1" max="60" value="24">
       </div>
       <div class="btn-row">
         <button class="btn btn-blue" id="playBtn"  disabled>▶ 再生</button>
@@ -511,6 +510,7 @@ function buildGIF(w, h, frames, delayCs) {
     });
   })();
 
+  document.getElementById('previewFps').addEventListener('input', () => { document.getElementById('fpsV').textContent = document.getElementById('previewFps').value + ' fps'; });
   hueS.addEventListener('input', () => { document.getElementById('hueV').textContent = `± ${hueS.value}°`; redrawIfStopped(); });
   litS.addEventListener('input', () => { document.getElementById('litV').textContent = `± ${litS.value}%`; redrawIfStopped(); });
   satS.addEventListener('input', () => { document.getElementById('satV').textContent = `± ${satS.value}%`; redrawIfStopped(); });
