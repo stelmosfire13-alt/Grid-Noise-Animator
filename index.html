@@ -243,15 +243,15 @@
       <div class="card-title">エフェクト設定</div>
       <div class="field">
         <div class="field-label">色相の変動幅 <em id="hueV">± 120°</em></div>
-        <input type="range" id="hueS" min="0" max="180" value="120">
+        <input type="range" id="hueS" min="0" max="90" value="60">
       </div>
       <div class="field">
         <div class="field-label">明度の変動幅 <em id="litV">± 40%</em></div>
-        <input type="range" id="litS" min="0" max="50" value="40">
+        <input type="range" id="litS" min="0" max="25" value="20">
       </div>
       <div class="field">
         <div class="field-label">彩度の変動幅 <em id="satV">± 30%</em></div>
-        <input type="range" id="satS" min="0" max="50" value="30">
+        <input type="range" id="satS" min="0" max="25" value="15">
       </div>
       <div class="field" style="margin-top:4px">
         <div class="field-label">
@@ -260,7 +260,7 @@
             <input type="checkbox" id="blurChk" style="width:13px;height:13px">ON
           </label>
         </div>
-        <input type="range" id="blurS" min="1" max="20" value="4">
+        <input type="range" id="blurS" min="1" max="10" value="4">
       </div>
       <div class="field">
         <div class="field-label">
@@ -269,7 +269,7 @@
             <input type="checkbox" id="warpChk" style="width:13px;height:13px">ON
           </label>
         </div>
-        <input type="range" id="warpS" min="1" max="40" value="10">
+        <input type="range" id="warpS" min="1" max="20" value="10">
       </div>
       <div class="field" style="margin-top:10px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
@@ -474,22 +474,21 @@ function buildGIF(w, h, frames, delayCs) {
   warpS.addEventListener('input', () => { document.getElementById('warpV').textContent = warpS.value + 'px'; });
 
   (function () {
-    const MIN_DRAG = 10;
+    const THUMB_HIT = 32; // px: how close to thumb center touch must land
     document.querySelectorAll('input[type=range]').forEach(slider => {
-      let pid = null, startX, startY, active;
+      let pid = null;
       slider.addEventListener('pointerdown', e => {
         if (e.pointerType !== 'touch') return;
-        e.preventDefault();
+        e.preventDefault(); // always block default jump-to-click behavior
+        const r = slider.getBoundingClientRect();
+        const ratio = (+slider.value - +slider.min) / (+slider.max - +slider.min);
+        const thumbX = r.left + ratio * r.width;
+        if (Math.abs(e.clientX - thumbX) > THUMB_HIT) return; // not on thumb — ignore
         slider.setPointerCapture(e.pointerId);
-        pid = e.pointerId; startX = e.clientX; startY = e.clientY; active = false;
+        pid = e.pointerId;
       });
       slider.addEventListener('pointermove', e => {
         if (e.pointerId !== pid) return;
-        const dx = e.clientX - startX, dy = e.clientY - startY;
-        if (!active) {
-          if (Math.abs(dx) < MIN_DRAG || Math.abs(dy) > Math.abs(dx)) return;
-          active = true;
-        }
         const r = slider.getBoundingClientRect();
         const v = Math.round(+slider.min + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (+slider.max - +slider.min));
         if (+slider.value !== v) { slider.value = v; slider.dispatchEvent(new Event('input')); }
