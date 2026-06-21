@@ -241,6 +241,13 @@
 
     <div class="card fx-card">
       <div class="card-title">エフェクト設定</div>
+      <div class="field" style="margin-bottom:10px">
+        <div class="field-label">ノイズタイプ</div>
+        <select id="noiseSel" style="font-size:0.82rem;padding:4px 7px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px">
+          <option value="white">ホワイトノイズ（ML耐性重視）</option>
+          <option value="blue">ブルーノイズ（見た目重視）</option>
+        </select>
+      </div>
       <div class="field">
         <div class="field-label">色相の変動幅 <em id="hueV">± 120°</em></div>
         <input type="range" id="hueS" min="0" max="90" value="60">
@@ -710,16 +717,29 @@ function buildGIF(w, h, frames, delayCs) {
     const buf = hslBuf;
     const out = outBuf;
     const chromaAmp = dH / 180 * 128;
-    const warpOn = warpChk.checked;
-    const warpR  = warpOn ? +warpS.value : 0;
+    const warpOn  = warpChk.checked;
+    const warpR   = warpOn ? +warpS.value : 0;
+    const isBlue  = document.getElementById('noiseSel').value === 'blue';
+    const frameTheta = Math.random() * 6.2831853;
 
     for (let ci = 0; ci < ROWS * COLS; ci++) {
       const { x: cx, y: cy, cw, ch } = cellBnds[ci];
 
-      const theta = Math.random() * 6.2831853;
+      let theta, ds, dl;
+      if (isBlue) {
+        const checker = (((ci / COLS) | 0) + (ci % COLS)) & 1;
+        const phase   = frameTheta + checker * 3.1415927;
+        const amp     = 0.5 + Math.random() * 0.5;
+        theta = phase + (Math.random() - 0.5) * 1.0472; // ±30° jitter
+        ds    = Math.sin(phase) * dS * amp;
+        dl    = Math.cos(phase) * dL * amp;
+      } else {
+        theta = Math.random() * 6.2831853;
+        ds    = (Math.random() * 2 - 1) * dS;
+        dl    = (Math.random() * 2 - 1) * dL;
+      }
+
       const cosT  = Math.cos(theta), sinT = Math.sin(theta);
-      const ds    = (Math.random() * 2 - 1) * dS;
-      const dl    = (Math.random() * 2 - 1) * dL;
 
       const dR =  chromaAmp *  cosT;
       const dG =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
