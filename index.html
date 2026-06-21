@@ -477,8 +477,14 @@ function buildGIF(w, h, frames, delayCs) {
   const warpChk  = document.getElementById('warpChk');
   const warpS    = document.getElementById('warpS');
 
-  blurS.addEventListener('input', () => { document.getElementById('blurV').textContent = blurS.value + 'px'; });
-  warpS.addEventListener('input', () => { document.getElementById('warpV').textContent = warpS.value + 'px'; });
+  const redrawIfStopped = () => { if (!playing && hslBuf) drawNoise(); };
+
+  blurS.addEventListener('input', () => { document.getElementById('blurV').textContent = blurS.value + 'px'; redrawIfStopped(); });
+  warpS.addEventListener('input', () => { document.getElementById('warpV').textContent = warpS.value + 'px'; redrawIfStopped(); });
+  document.getElementById('blurChk').addEventListener('change', redrawIfStopped);
+  document.getElementById('warpChk').addEventListener('change', redrawIfStopped);
+  document.getElementById('noiseSel').addEventListener('change', redrawIfStopped);
+  mlGuard.addEventListener('change', redrawIfStopped);
 
   (function () {
     const THUMB_HIT = 32; // px: how close to thumb center touch must land
@@ -505,9 +511,9 @@ function buildGIF(w, h, frames, delayCs) {
     });
   })();
 
-  hueS.addEventListener('input', () => { document.getElementById('hueV').textContent = `± ${hueS.value}°`; });
-  litS.addEventListener('input', () => { document.getElementById('litV').textContent = `± ${litS.value}%`; });
-  satS.addEventListener('input', () => { document.getElementById('satV').textContent = `± ${satS.value}%`; });
+  hueS.addEventListener('input', () => { document.getElementById('hueV').textContent = `± ${hueS.value}°`; redrawIfStopped(); });
+  litS.addEventListener('input', () => { document.getElementById('litV').textContent = `± ${litS.value}%`; redrawIfStopped(); });
+  satS.addEventListener('input', () => { document.getElementById('satV').textContent = `± ${satS.value}%`; redrawIfStopped(); });
 
   document.getElementById('gridSel').addEventListener('change', () => {
     const n = parseInt(document.getElementById('gridSel').value);
