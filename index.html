@@ -213,7 +213,15 @@
       <h1>Grid Noise Animator</h1>
       <p>画像をチカチカさせるツールです。</p>
     </div>
-    <a href="en.html" style="font-size:0.78rem;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:5px;padding:4px 10px;margin-top:2px;white-space:nowrap;transition:color 0.15s,border-color 0.15s" onmouseover="this.style.color='var(--text)';this.style.borderColor='var(--accent)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">EN</a>
+    <select onchange="location.href=this.value" style="font-size:0.78rem;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:4px 8px;margin-top:2px;cursor:pointer;outline:none">
+      <option value="index.html" selected>日本語</option>
+      <option value="en.html">English</option>
+      <option value="ko.html">한국어</option>
+      <option value="zh-hans.html">中文(简)</option>
+      <option value="zh-hant.html">中文(繁)</option>
+      <option value="fr.html">Français</option>
+      <option value="es.html">Español</option>
+    </select>
   </header>
 
   <div class="layout">
@@ -252,34 +260,34 @@
         </select>
       </div>
       <div class="field">
-        <div class="field-label">色相の変動幅 <em id="hueV">± 120°</em></div>
-        <input type="range" id="hueS" min="0" max="90" value="60">
+        <div class="field-label">色相の変動幅 <em id="hueV">± 15°</em></div>
+        <input type="range" id="hueS" min="0" max="90" value="15">
       </div>
       <div class="field">
-        <div class="field-label">明度の変動幅 <em id="litV">± 40%</em></div>
-        <input type="range" id="litS" min="0" max="25" value="20">
+        <div class="field-label">明度の変動幅 <em id="litV">± 5%</em></div>
+        <input type="range" id="litS" min="0" max="25" value="5">
       </div>
       <div class="field">
-        <div class="field-label">彩度の変動幅 <em id="satV">± 30%</em></div>
-        <input type="range" id="satS" min="0" max="25" value="15">
+        <div class="field-label">彩度の変動幅 <em id="satV">± 5%</em></div>
+        <input type="range" id="satS" min="0" max="25" value="5">
       </div>
       <div class="field" style="margin-top:4px">
         <div class="field-label">
-          <span>ぼかし <em id="blurV">4px</em></span>
+          <span>ぼかし <em id="blurV">1px</em></span>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;color:var(--muted)">
-            <input type="checkbox" id="blurChk" style="width:13px;height:13px">ON
+            <input type="checkbox" id="blurChk" checked style="width:13px;height:13px">ON
           </label>
         </div>
-        <input type="range" id="blurS" min="1" max="10" value="4">
+        <input type="range" id="blurS" min="1" max="10" value="1">
       </div>
       <div class="field">
         <div class="field-label">
-          <span>歪み <em id="warpV">10px</em></span>
+          <span>歪み <em id="warpV">2px</em></span>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;color:var(--muted)">
-            <input type="checkbox" id="warpChk" style="width:13px;height:13px">ON
+            <input type="checkbox" id="warpChk" checked style="width:13px;height:13px">ON
           </label>
         </div>
-        <input type="range" id="warpS" min="1" max="20" value="10">
+        <input type="range" id="warpS" min="1" max="20" value="2">
       </div>
       <div class="field" style="margin-top:10px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
@@ -295,8 +303,8 @@
     <div class="card ctrl-card">
       <div class="card-title">プレビュー制御</div>
       <div class="field" style="margin-bottom:10px">
-        <div class="field-label">FPS <em id="fpsV">24 fps</em></div>
-        <input type="range" id="previewFps" min="1" max="180" value="24">
+        <div class="field-label">FPS <em id="fpsV">60 fps</em></div>
+        <input type="range" id="previewFps" min="1" max="180" value="60">
       </div>
       <div class="btn-row">
         <button class="btn btn-blue" id="playBtn"  disabled>▶ 再生</button>
