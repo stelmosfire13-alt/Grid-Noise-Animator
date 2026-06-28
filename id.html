@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -205,11 +205,11 @@
   <header style="display:flex;align-items:flex-start;justify-content:space-between">
     <div>
       <h1>Grid Noise Animator</h1>
-      <p>Animate images with grid-based color noise.</p>
+      <p>Animasikan gambar dengan noise warna berbasis grid.</p>
     </div>
     <select onchange="location.href=this.value" style="font-size:0.78rem;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:4px 8px;margin-top:2px;cursor:pointer;outline:none">
       <option value="index.html">日本語</option>
-      <option value="en.html" selected>English</option>
+      <option value="en.html">English</option>
       <option value="ko.html">한국어</option>
       <option value="zh-hans.html">中文(简)</option>
       <option value="zh-hant.html">中文(繁)</option>
@@ -218,27 +218,27 @@
       <option value="de.html">Deutsch</option>
       <option value="ru.html">Русский</option>
       <option value="ar.html">العربية</option>
-      <option value="id.html">Indonesia</option>
+      <option value="id.html" selected>Indonesia</option>
     </select>
   </header>
 
   <div class="layout">
     <div class="card upload-card">
-      <div class="card-title">Select Image</div>
+      <div class="card-title">Pilih Gambar</div>
       <div class="dz" id="dz">
         <input type="file" id="fileIn" accept="image/*">
         <img id="dzThumb" class="dz-thumb" alt="">
         <div class="dz-inner">
-          <div>Click or drag &amp; drop</div>
+          <div>Klik atau seret &amp; lepas</div>
           <div class="dz-name" id="dzName"></div>
         </div>
       </div>
     </div><!-- /upload-card -->
 
     <div class="card grid-card">
-      <div class="card-title">Grid Settings</div>
+      <div class="card-title">Pengaturan Grid</div>
       <div class="num-row">
-        <label>Grid size</label>
+        <label>Ukuran grid</label>
         <select id="gridSel">
           <option value="16">16 × 16</option>
           <option value="32" selected>32 × 32</option>
@@ -249,24 +249,24 @@
     </div>
 
     <div class="card fx-card">
-      <div class="card-title">Effect Settings</div>
+      <div class="card-title">Pengaturan Efek</div>
       <div class="field" style="margin-bottom:10px">
-        <div class="field-label">Noise Type</div>
+        <div class="field-label">Jenis Noise</div>
         <select id="noiseSel" style="font-size:0.82rem;padding:4px 7px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px">
-          <option value="white">White Noise (ML resistance)</option>
-          <option value="blue">Blue Noise (visual quality)</option>
+          <option value="white">White Noise (tahan AI)</option>
+          <option value="blue">Blue Noise (kualitas visual)</option>
         </select>
       </div>
       <div class="field">
-        <div class="field-label">Hue variance <em id="hueV">± 15°</em></div>
+        <div class="field-label">Variasi hue <em id="hueV">± 15°</em></div>
         <input type="range" id="hueS" min="0" max="90" value="15">
       </div>
       <div class="field">
-        <div class="field-label">Lightness variance <em id="litV">± 5%</em></div>
+        <div class="field-label">Variasi kecerahan <em id="litV">± 5%</em></div>
         <input type="range" id="litS" min="0" max="25" value="5">
       </div>
       <div class="field">
-        <div class="field-label">Saturation variance <em id="satV">± 5%</em></div>
+        <div class="field-label">Variasi saturasi <em id="satV">± 5%</em></div>
         <input type="range" id="satS" min="0" max="25" value="5">
       </div>
       <div class="field" style="margin-top:4px">
@@ -290,37 +290,37 @@
       <div class="field" style="margin-top:10px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="checkbox" id="mlGuard" checked style="width:14px;height:14px">
-          <span>ML Protection (high-freq overlay)</span>
+          <span>Proteksi AI (overlay frekuensi tinggi)</span>
         </label>
         <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
-          Embeds a fixed pattern that survives frame averaging. Invisible to humans but disrupts AI feature extraction.
+          Menyisipkan pola tetap yang bertahan dari rata-rata frame. Tidak terlihat manusia namun mengganggu ekstraksi fitur AI.
         </div>
       </div>
     </div>
 
     <div class="card ctrl-card">
-      <div class="card-title">Preview Controls</div>
+      <div class="card-title">Kontrol Pratinjau</div>
       <div class="field" style="margin-bottom:10px">
         <div class="field-label">FPS <em id="fpsV">60 fps</em></div>
         <input type="range" id="previewFps" min="1" max="180" value="60">
       </div>
       <div class="btn-row">
-        <button class="btn btn-blue" id="playBtn"  disabled>▶ Play</button>
-        <button class="btn btn-gray" id="pauseBtn" disabled>■ Stop</button>
+        <button class="btn btn-blue" id="playBtn"  disabled>▶ Putar</button>
+        <button class="btn btn-gray" id="pauseBtn" disabled>■ Berhenti</button>
       </div>
     </div>
 
     <div class="card out-card">
-      <div class="card-title">Export Video</div>
+      <div class="card-title">Ekspor Video</div>
       <div class="num-row">
         <label>Frame rate</label>
         <input type="number" id="fpsIn" value="60" min="1" max="60">
         <span>fps</span>
       </div>
       <div class="num-row">
-        <label>Duration</label>
+        <label>Durasi</label>
         <input type="number" id="durIn" value="1"  min="1" max="120">
-        <span>sec</span>
+        <span>dtk</span>
       </div>
       <div class="num-row">
         <label>Format</label>
@@ -330,16 +330,16 @@
           <option value="gif">GIF Animation</option>
         </select>
       </div>
-      <button class="btn btn-blue btn-full" id="expBtn" disabled>Export</button>
+      <button class="btn btn-blue btn-full" id="expBtn" disabled>Ekspor</button>
       <div class="progress" id="prog">
         <div class="progress-fill" id="progFill"></div>
       </div>
-      <div class="status" id="st">Load an image to get started</div>
+      <div class="status" id="st">Muat gambar untuk memulai</div>
     </div>
 
 
     <div class="preview-pane">
-      <span class="preview-empty" id="emptyMsg">Preview will appear here after loading an image</span>
+      <span class="preview-empty" id="emptyMsg">Pratinjau akan muncul di sini setelah gambar dimuat</span>
       <canvas id="mainCanvas"></canvas>
       <div class="badge" id="badge"></div>
     </div>
@@ -635,7 +635,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   function loadFile(file) {
     stopAll();
-    setStatus('Loading...');
+    setStatus('Memuat...');
     const reader = new FileReader();
     reader.onload = ev => {
       const url = ev.target.result;
@@ -702,7 +702,7 @@ function buildGIF(w, h, frames, delayCs) {
     drawOriginal();
     playBtn.disabled = false;
     expBtn.disabled  = false;
-    setStatus(`Loaded: ${name}  (${img.naturalWidth} × ${img.naturalHeight})`);
+    setStatus(`Dimuat: ${name}  (${img.naturalWidth} × ${img.naturalHeight})`);
   }
 
   // ── Drawing ───────────────────────────────────────────────────────────────
@@ -840,8 +840,8 @@ function buildGIF(w, h, frames, delayCs) {
     animId = requestAnimationFrame(loop);
     playBtn.disabled  = true;
     pauseBtn.disabled = false;
-    setBadge('▶ Playing', 'playing');
-    setStatus('Playing… pausing reveals a single scrambled frame');
+    setBadge('▶ Memutar', 'playing');
+    setStatus('Memutar… jeda menampilkan satu frame acak');
   }
 
   function stopPlay() {
@@ -850,7 +850,7 @@ function buildGIF(w, h, frames, delayCs) {
     playBtn.disabled  = !hslBuf;
     pauseBtn.disabled = true;
     setBadge('');
-    setStatus('Stopped (showing last frame)');
+    setStatus('Dihentikan (menampilkan frame terakhir)');
   }
 
   function stopAll() {
@@ -876,7 +876,7 @@ function buildGIF(w, h, frames, delayCs) {
     prog.style.display = 'none'; progFill.style.width = '0%';
     setBadge('');
     playBtn.disabled = false; expBtn.disabled = false;
-    setStatus(`Done  ${(blob.size / 1048576).toFixed(1)} MB  (${fps} fps, ${dur} sec)`);
+    setStatus(`Selesai  ${(blob.size / 1048576).toFixed(1)} MB  (${fps} fps, ${dur} dtk)`);
   }
 
   // ── Export ────────────────────────────────────────────────────────────────
@@ -893,14 +893,14 @@ function buildGIF(w, h, frames, delayCs) {
     playBtn.disabled = true; pauseBtn.disabled = true; expBtn.disabled = true;
     prog.style.display = 'block'; progFill.style.width = '0%';
     setBadge('● REC', 'recording');
-    setStatus(`Recording… 0 / ${total} frames`);
+    setStatus(`Merekam… 0 / ${total} frame`);
 
     if (fmt === 'gif') {
       const gifFps   = Math.min(fps, 50);
       const delayCs  = Math.max(2, Math.round(100 / gifFps));
       const gifTotal = Math.round(dur * gifFps);
 
-      setStatus('Preparing GIF palette...');
+      setStatus('Menyiapkan palet GIF...');
       await new Promise(r => setTimeout(r, 0));
       getGifLut();
 
@@ -914,27 +914,27 @@ function buildGIF(w, h, frames, delayCs) {
             : outBuf;
           frames.push(quantizeToGif(src));
           progFill.style.width = ((f + 1) / gifTotal * 100).toFixed(1) + '%';
-          setStatus(`Encoding GIF… ${f + 1} / ${gifTotal} frames`);
+          setStatus(`Mengenkode GIF… ${f + 1} / ${gifTotal} frame`);
           if (f % 10 === 9) await new Promise(r => setTimeout(r, 0));
         }
         if (!exporting) return;
-        setStatus('Encoding GIF...');
+        setStatus('Mengenkode GIF...');
         await new Promise(r => setTimeout(r, 0));
         const data = buildGIF(imgW, imgH, frames, delayCs);
         exporting = false;
         exportDone(new Blob([data], { type: 'image/gif' }), 'gif', gifFps, dur);
-      })().catch(e => { stopAll(); setStatus('GIF error: ' + e.message); });
+      })().catch(e => { stopAll(); setStatus('Error GIF: ' + e.message); });
 
     } else if (fmt === 'mp4') {
       // ── MP4: WebCodecs (VideoEncoder) + mp4-muxer ────────────────────────
       if (!window.VideoEncoder) {
         stopAll();
-        setStatus('MP4 export requires Chrome / Edge / Safari 16.4 or later');
+        setStatus('Ekspor MP4 memerlukan Chrome / Edge / Safari 16.4 atau lebih baru');
         return;
       }
       if (!window.Mp4Muxer) {
         stopAll();
-        setStatus('Failed to load mp4-muxer (offline?)');
+        setStatus('Gagal memuat mp4-muxer (offline?)');
         return;
       }
 
@@ -947,7 +947,7 @@ function buildGIF(w, h, frames, delayCs) {
         } catch {}
       }
       if (!chosenCodec) {
-        stopAll(); setStatus('No H.264 encoder found'); return;
+        stopAll(); setStatus('Encoder H.264 tidak ditemukan'); return;
       }
 
       const { Muxer, ArrayBufferTarget } = window.Mp4Muxer;
@@ -960,7 +960,7 @@ function buildGIF(w, h, frames, delayCs) {
 
       const encoder = new VideoEncoder({
         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-        error:  (e) => { stopAll(); setStatus('Encode error: ' + e.message); },
+        error:  (e) => { stopAll(); setStatus('Error enkode: ' + e.message); },
       });
       encoder.configure({
         codec: chosenCodec, width: imgW, height: imgH,
@@ -976,7 +976,7 @@ function buildGIF(w, h, frames, delayCs) {
           vf.close();
           while (encoder.encodeQueueSize > 10) await new Promise(r => setTimeout(r, 5));
           progFill.style.width = ((f + 1) / total * 100).toFixed(1) + '%';
-          setStatus(`Recording MP4… ${f + 1} / ${total} frames`);
+          setStatus(`Merekam MP4… ${f + 1} / ${total} frame`);
           if (f % 5 === 4) await new Promise(r => setTimeout(r, 0));
         }
         if (!exporting) return;
@@ -984,7 +984,7 @@ function buildGIF(w, h, frames, delayCs) {
         muxer.finalize();
         exporting = false;
         exportDone(new Blob([target.buffer], { type: 'video/mp4' }), 'mp4', fps, dur);
-      })().catch(e => { stopAll(); setStatus('MP4 error: ' + e.message); });
+      })().catch(e => { stopAll(); setStatus('Error MP4: ' + e.message); });
 
     } else {
       const codecs = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
@@ -1000,7 +1000,7 @@ function buildGIF(w, h, frames, delayCs) {
         exporting = false;
         exportDone(new Blob(chunks, { type: mime.split(';')[0] }), 'webm', fps, dur);
       };
-      recorder.onerror = () => { stopAll(); setStatus('An error occurred during recording.'); };
+      recorder.onerror = () => { stopAll(); setStatus('Terjadi error saat merekam.'); };
 
       recorder.start(200);
       let frame = 0;
@@ -1009,7 +1009,7 @@ function buildGIF(w, h, frames, delayCs) {
         drawNoise();
         frame++;
         progFill.style.width = (frame / total * 100).toFixed(1) + '%';
-        setStatus(`Recording WebM… ${frame} / ${total} frames  (${(frame / fps).toFixed(1)} sec)`);
+        setStatus(`Merekam WebM… ${frame} / ${total} frame  (${(frame / fps).toFixed(1)} dtk)`);
         if (frame >= total) { clearInterval(expInterval); expInterval = null; recorder.stop(); }
       }, 1000 / fps);
     }
@@ -1024,7 +1024,7 @@ function buildGIF(w, h, frames, delayCs) {
 <script>
   (function () {
     const img = document.getElementById('accessCounter');
-    const pageUrl = encodeURIComponent('https://grid-noise-animator.vercel.app/en.html');
+    const pageUrl = encodeURIComponent('https://grid-noise-animator.vercel.app/id.html');
     img.src = 'https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=' + pageUrl
             + '&count_bg=%236c8ef5&title_bg=%2316161a&icon=&icon_color=%23dde0f0'
             + '&title=Visits&edge_flat=true';
