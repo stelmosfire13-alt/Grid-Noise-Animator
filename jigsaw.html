@@ -179,6 +179,11 @@
         </select>
       </div>
       <div class="hint">ボロノイ図でランダムに分割します。</div>
+      <div class="field" style="margin-top:10px">
+        <div class="field-label">自動変化間隔 <em id="morphV">10 f</em></div>
+        <input type="range" id="morphS" min="1" max="120" value="10">
+        <div class="hint" style="margin-top:3px">再生中、N フレームごとにセル形状が変わります。</div>
+      </div>
       <button class="btn btn-gray btn-full" id="regenBtn" disabled style="margin-top:8px">領域を再生成</button>
     </div>
 
@@ -314,6 +319,7 @@ function buildGIF(w,h,frames,delayCs) {
   const colorLitS   = document.getElementById('colorLitS');
   const reprocessBtn = document.getElementById('reprocessBtn');
   const regenBtn    = document.getElementById('regenBtn');
+  const morphS      = document.getElementById('morphS');
 
   // ── State ──────────────────────────────────────────────────────────────────
   let imgW = 0, imgH = 0;
@@ -330,10 +336,11 @@ function buildGIF(w,h,frames,delayCs) {
   // Pre-allocated per-cell noise arrays (avoids GC pressure per frame)
   let _cWdx, _cWdy, _cBright, _cDl, _cCdR, _cCdG, _cCdB;
 
-  let animId    = null;
-  let playing   = false;
-  let exporting = false;
+  let animId      = null;
+  let playing     = false;
+  let exporting   = false;
   let expInterval = null;
+  let frameCount  = 0;
 
   // ── Color math ─────────────────────────────────────────────────────────────
   function rgbToHsl(r, g, b) {
@@ -366,6 +373,7 @@ function buildGIF(w,h,frames,delayCs) {
 
   reprocessBtn.addEventListener('click', () => { if (origCanvas) decompose(); });
   regenBtn.addEventListener('click', () => { if (lowHslBuf) { regenerateSeeds(); redrawIfStopped(); } });
+  morphS.addEventListener('input', () => { document.getElementById('morphV').textContent = morphS.value + ' f'; });
 
   // Touch guard for sliders
   (function () {
@@ -491,13 +499,13 @@ function buildGIF(w,h,frames,delayCs) {
     const w = imgW, h = imgH;
     const cellW = w / COLS, cellH = h / ROWS;
 
-    // Jittered grid: one seed randomly placed inside each grid cell
+    // Jittered grid: seed within [0.25, 0.75] of each cell so ±1 neighbor check suffices
     cellSeeds = new Float32Array(N * 2);
     for (let row = 0; row < ROWS; row++) {
       for (let col = 0; col < COLS; col++) {
         const ci = row * COLS + col;
-        cellSeeds[ci * 2]     = (col + Math.random()) * cellW;
-        cellSeeds[ci * 2 + 1] = (row + Math.random()) * cellH;
+        cellSeeds[ci * 2]     = (col + 0.25 + Math.random() * 0.5) * cellW;
+        cellSeeds[ci * 2 + 1] = (row + 0.25 + Math.random() * 0.5) * cellH;
       }
     }
 
@@ -513,10 +521,9 @@ function buildGIF(w,h,frames,delayCs) {
     buildCellMap();
   }
 
-  // Assign each pixel to its nearest seed (check ±2 neighboring grid cells).
-  // Using ±2 guarantees correctness for any jitter magnitude ≤ 1 cell.
+  // Assign each pixel to its nearest seed (check ±1 neighboring grid cells).
+  // ±1 is sufficient because jitter is clamped to [0.25, 0.75] within each cell.
   function buildCellMap() {
-    const N = COLS * ROWS;
     const w = imgW, h = imgH;
     const cellW = w / COLS, cellH = h / ROWS;
 
@@ -524,12 +531,12 @@ function buildGIF(w,h,frames,delayCs) {
 
     for (let py = 0; py < h; py++) {
       const rowC = py / cellH | 0;
-      const r0   = rowC - 2 < 0 ? 0 : rowC - 2;
-      const r1   = rowC + 2 >= ROWS ? ROWS - 1 : rowC + 2;
+      const r0   = rowC - 1 < 0 ? 0 : rowC - 1;
+      const r1   = rowC + 1 >= ROWS ? ROWS - 1 : rowC + 1;
       for (let px = 0; px < w; px++) {
         const colC = px / cellW | 0;
-        const c0   = colC - 2 < 0 ? 0 : colC - 2;
-        const c1   = colC + 2 >= COLS ? COLS - 1 : colC + 2;
+        const c0   = colC - 1 < 0 ? 0 : colC - 1;
+        const c1   = colC + 1 >= COLS ? COLS - 1 : colC + 1;
 
         let bestD = Infinity, bestCi = 0;
         for (let row = r0; row <= r1; row++) {
@@ -636,7 +643,13 @@ function buildGIF(w,h,frames,delayCs) {
   let lastTs = 0;
   function loop(ts) {
     const fps = Math.max(1, parseInt(document.getElementById('previewFps').value) || 60);
-    if (ts - lastTs >= 1000 / fps) { drawNoise(); lastTs = ts; }
+    if (ts - lastTs >= 1000 / fps) {
+      frameCount++;
+      const interval = Math.max(1, parseInt(morphS.value) || 10);
+      if (frameCount % interval === 0) regenerateSeeds();
+      drawNoise();
+      lastTs = ts;
+    }
     animId = requestAnimationFrame(loop);
   }
 
