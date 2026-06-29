@@ -246,6 +246,16 @@
           <option value="128">128 × 128</option>
         </select>
       </div>
+      <div class="field" style="margin-top:8px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="voronoiChk" style="width:14px;height:14px">
+          <span>Erweiterter Modus</span>
+        </label>
+      </div>
+      <div id="morphField" style="display:none;margin-top:8px">
+        <div class="field-label">Variationsintervall <em id="morphV">10 f</em></div>
+        <input type="range" id="morphS" min="1" max="120" value="10">
+      </div>
     </div>
 
     <div class="card fx-card">
@@ -484,8 +494,10 @@ function buildGIF(w, h, frames, delayCs) {
   const mlGuard  = document.getElementById('mlGuard');
   const blurChk  = document.getElementById('blurChk');
   const blurS    = document.getElementById('blurS');
-  const warpChk  = document.getElementById('warpChk');
-  const warpS    = document.getElementById('warpS');
+  const warpChk    = document.getElementById('warpChk');
+  const warpS      = document.getElementById('warpS');
+  const voronoiChk = document.getElementById('voronoiChk');
+  const morphS     = document.getElementById('morphS');
 
   const redrawIfStopped = () => { if (!playing && hslBuf) drawNoise(); };
 
@@ -526,10 +538,21 @@ function buildGIF(w, h, frames, delayCs) {
   litS.addEventListener('input', () => { document.getElementById('litV').textContent = `± ${litS.value}%`; redrawIfStopped(); });
   satS.addEventListener('input', () => { document.getElementById('satV').textContent = `± ${satS.value}%`; redrawIfStopped(); });
 
+  morphS.addEventListener('input', () => { document.getElementById('morphV').textContent = morphS.value + ' f'; });
+
+  voronoiChk.addEventListener('change', () => {
+    document.getElementById('morphField').style.display = voronoiChk.checked ? 'block' : 'none';
+    if (voronoiChk.checked && hslBuf) { regenerateSeeds(); if (!playing) drawNoise(); }
+    else if (!voronoiChk.checked && !playing && hslBuf) drawNoise();
+  });
+
   document.getElementById('gridSel').addEventListener('change', () => {
     const n = parseInt(document.getElementById('gridSel').value);
     COLS = n; ROWS = n;
-    if (hslBuf) rebuildCellBnds();
+    if (hslBuf) {
+      rebuildCellBnds();
+      if (voronoiChk.checked) { regenerateSeeds(); if (!playing) drawNoise(); }
+    }
   });
 
   function rebuildCellBnds() {
@@ -546,6 +569,52 @@ function buildGIF(w, h, frames, delayCs) {
     }
   }
 
+  function regenerateSeeds() {
+    const N = COLS * ROWS;
+    const w = imgW, h = imgH;
+    if (!w) return;
+    const cellW = w / COLS, cellH = h / ROWS;
+    cellSeeds = new Float32Array(N * 2);
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const ci = row * COLS + col;
+        cellSeeds[ci * 2]     = (col + 0.25 + Math.random() * 0.5) * cellW;
+        cellSeeds[ci * 2 + 1] = (row + 0.25 + Math.random() * 0.5) * cellH;
+      }
+    }
+    _cWdx = new Float32Array(N); _cWdy = new Float32Array(N);
+    _cDl  = new Float32Array(N); _cDs  = new Float32Array(N);
+    _cCdR = new Float32Array(N); _cCdG = new Float32Array(N); _cCdB = new Float32Array(N);
+    buildCellMap();
+  }
+
+  function buildCellMap() {
+    const w = imgW, h = imgH;
+    const cellW = w / COLS, cellH = h / ROWS;
+    cellMap = new Int32Array(w * h);
+    for (let py = 0; py < h; py++) {
+      const rowC = py / cellH | 0;
+      const r0 = rowC - 1 < 0 ? 0 : rowC - 1;
+      const r1 = rowC + 1 >= ROWS ? ROWS - 1 : rowC + 1;
+      for (let px = 0; px < w; px++) {
+        const colC = px / cellW | 0;
+        const c0 = colC - 1 < 0 ? 0 : colC - 1;
+        const c1 = colC + 1 >= COLS ? COLS - 1 : colC + 1;
+        let bestD = Infinity, bestCi = 0;
+        for (let row = r0; row <= r1; row++) {
+          for (let col = c0; col <= c1; col++) {
+            const ci = row * COLS + col;
+            const dx = px - cellSeeds[ci * 2];
+            const dy = py - cellSeeds[ci * 2 + 1];
+            const d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; bestCi = ci; }
+          }
+        }
+        cellMap[py * w + px] = bestCi;
+      }
+    }
+  }
+
   // ── State ─────────────────────────────────────────────────────────────────
   let hslBuf     = null;
   let outBuf     = null;
@@ -558,6 +627,11 @@ function buildGIF(w, h, frames, delayCs) {
   let playing     = false;
   let exporting   = false;
   let expInterval = null;
+  let frameCount  = 0;
+
+  let cellMap   = null;
+  let cellSeeds = null;
+  let _cWdx, _cWdy, _cDl, _cDs, _cCdR, _cCdG, _cCdB;
 
   let fixedOverlay = null;
   let blurOffscreen = null, blurOCtx = null;
@@ -710,8 +784,111 @@ function buildGIF(w, h, frames, delayCs) {
     if (origCanvas) ctx.drawImage(origCanvas, 0, 0);
   }
 
+  function drawNoiseVoronoi() {
+    if (!hslBuf || !cellMap) return;
+    const N = COLS * ROWS;
+    const w = imgW, h = imgH;
+    const buf = hslBuf;
+    const out = outBuf;
+    const chromaAmp = +hueS.value / 180 * 128;
+    const dL = +litS.value;
+    const dS = +satS.value;
+    const warpOn = warpChk.checked;
+    const warpR  = warpOn ? +warpS.value : 0;
+    const isBlue = document.getElementById('noiseSel').value === 'blue';
+    const frameTheta = Math.random() * 6.2831853;
+
+    for (let ci = 0; ci < N; ci++) {
+      let theta, ds, dl;
+      if (isBlue) {
+        const checker = (((ci / COLS) | 0) + (ci % COLS)) & 1;
+        const phase = frameTheta + checker * 3.1415927;
+        const amp   = 0.5 + Math.random() * 0.5;
+        theta = phase + (Math.random() - 0.5) * 1.0472;
+        ds = Math.sin(phase) * dS * amp;
+        dl = Math.cos(phase) * dL * amp;
+      } else {
+        theta = Math.random() * 6.2831853;
+        ds = (Math.random() * 2 - 1) * dS;
+        dl = (Math.random() * 2 - 1) * dL;
+      }
+      const cosT = Math.cos(theta), sinT = Math.sin(theta);
+      _cCdR[ci] =  chromaAmp *  cosT;
+      _cCdG[ci] =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
+      _cCdB[ci] =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
+      _cDl[ci] = dl; _cDs[ci] = ds;
+      _cWdx[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+      _cWdy[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+    }
+
+    for (let py = 0; py < h; py++) {
+      const rowBase = py * w;
+      for (let px = 0; px < w; px++) {
+        const i  = rowBase + px;
+        const i4 = i * 4;
+        const ci = cellMap[i];
+
+        let i3;
+        if (warpOn) {
+          const sx = Math.min(w - 1, Math.max(0, (px + _cWdx[ci]) | 0));
+          const sy = Math.min(h - 1, Math.max(0, (py + _cWdy[ci]) | 0));
+          i3 = (sy * w + sx) * 3;
+        } else {
+          i3 = i * 3;
+        }
+
+        let sv = buf[i3 + 1] + _cDs[ci];
+        if (sv < 0) sv = 0; else if (sv > 100) sv = 100;
+        let lv = buf[i3 + 2] + _cDl[ci];
+        if (lv < 0) lv = 0; else if (lv > 100) lv = 100;
+
+        const hv = buf[i3];
+        const sn = sv / 100, ln = lv / 100;
+        const a  = sn * (ln < 0.5 ? ln : 1 - ln);
+        const h30 = hv / 30;
+        let k, t, u;
+
+        k = h30 % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let r = (ln - a * t) * 255;
+
+        k = (h30 + 8) % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let g = (ln - a * t) * 255;
+
+        k = (h30 + 4) % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let b = (ln - a * t) * 255;
+
+        r += _cCdR[ci]; if(r<0)r=0; else if(r>255)r=255;
+        g += _cCdG[ci]; if(g<0)g=0; else if(g>255)g=255;
+        b += _cCdB[ci]; if(b<0)b=0; else if(b>255)b=255;
+
+        if (mlGuard.checked && fixedOverlay) {
+          const oi = i * 3;
+          r += fixedOverlay[oi];     if(r<0)r=0; else if(r>255)r=255;
+          g += fixedOverlay[oi + 1]; if(g<0)g=0; else if(g>255)g=255;
+          b += fixedOverlay[oi + 2]; if(b<0)b=0; else if(b>255)b=255;
+        }
+
+        out[i4]     = r + 0.5 | 0;
+        out[i4 + 1] = g + 0.5 | 0;
+        out[i4 + 2] = b + 0.5 | 0;
+      }
+    }
+
+    ctx.putImageData(imgDataObj, 0, 0);
+
+    if (blurChk.checked && blurOffscreen) {
+      blurOCtx.filter = `blur(${blurS.value}px)`;
+      blurOCtx.drawImage(canvas, 0, 0);
+      ctx.drawImage(blurOffscreen, 0, 0);
+    }
+  }
+
   function drawNoise() {
     if (!hslBuf) return;
+    if (voronoiChk.checked) { drawNoiseVoronoi(); return; }
     const dH  = +hueS.value;
     const dL  = +litS.value;
     const dS  = +satS.value;
@@ -829,14 +1006,22 @@ function buildGIF(w, h, frames, delayCs) {
   let lastTs = 0;
   function loop(ts) {
     const fps = Math.max(1, parseInt(document.getElementById('previewFps').value) || 60);
-    if (ts - lastTs >= 1000 / fps) { drawNoise(); lastTs = ts; }
+    if (ts - lastTs >= 1000 / fps) {
+      if (voronoiChk.checked) {
+        frameCount++;
+        const interval = Math.max(1, parseInt(morphS.value) || 10);
+        if (frameCount % interval === 0) regenerateSeeds();
+      }
+      drawNoise();
+      lastTs = ts;
+    }
     animId = requestAnimationFrame(loop);
   }
 
   function startPlay() {
     if (playing || exporting || !hslBuf) return;
     playing = true;
-    lastTs = 0;
+    lastTs = 0; frameCount = 0;
     animId = requestAnimationFrame(loop);
     playBtn.disabled  = true;
     pauseBtn.disabled = false;
