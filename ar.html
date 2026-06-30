@@ -256,6 +256,25 @@
         <div class="field-label">فاصل التغيير <em id="morphV">10 f</em></div>
         <input type="range" id="morphS" min="1" max="120" value="10">
       </div>
+      <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="detailChk" style="width:14px;height:14px">
+            <span>وضع التفاصيل</span>
+          </label>
+        </div>
+        <div id="detailField" style="display:none;margin-top:8px">
+          <div class="field">
+            <div class="field-label">العمق <em id="sepV">25px</em></div>
+            <input type="range" id="sepS" min="1" max="30" value="25">
+          </div>
+          <div class="field">
+            <div class="field-label">قوة الحافة <em id="edgeBrightV">10%</em></div>
+            <input type="range" id="edgeBrightS" min="0" max="100" value="10">
+          </div>
+          <button class="btn btn-gray btn-full" id="reprocessBtn" disabled style="margin-top:6px">إعادة المعالجة</button>
+        </div>
+      </div>
     </div>
 
     <div class="card fx-card">
@@ -497,7 +516,11 @@ function buildGIF(w, h, frames, delayCs) {
   const warpChk    = document.getElementById('warpChk');
   const warpS      = document.getElementById('warpS');
   const voronoiChk = document.getElementById('voronoiChk');
-  const morphS     = document.getElementById('morphS');
+  const morphS        = document.getElementById('morphS');
+  const detailChk     = document.getElementById('detailChk');
+  const sepS          = document.getElementById('sepS');
+  const edgeBrightS   = document.getElementById('edgeBrightS');
+  const reprocessBtn  = document.getElementById('reprocessBtn');
 
   const redrawIfStopped = () => { if (!playing && hslBuf) drawNoise(); };
 
@@ -546,6 +569,21 @@ function buildGIF(w, h, frames, delayCs) {
     else if (!voronoiChk.checked && !playing && hslBuf) drawNoise();
   });
 
+  sepS.addEventListener('input', () => { document.getElementById('sepV').textContent = sepS.value + 'px'; });
+  edgeBrightS.addEventListener('input', () => { document.getElementById('edgeBrightV').textContent = edgeBrightS.value + '%'; redrawIfStopped(); });
+  reprocessBtn.addEventListener('click', () => { if (origCanvas) decompose(); });
+  detailChk.addEventListener('change', () => {
+    document.getElementById('detailField').style.display = detailChk.checked ? 'block' : 'none';
+    if (detailChk.checked) {
+      reprocessBtn.disabled = !hslBuf;
+      if (hslBuf) decompose();
+    } else {
+      reprocessBtn.disabled = true;
+      lowHslBuf = null; edgeBuf = null;
+      if (!playing && hslBuf) drawNoise();
+    }
+  });
+
   document.getElementById('gridSel').addEventListener('change', () => {
     const n = parseInt(document.getElementById('gridSel').value);
     COLS = n; ROWS = n;
@@ -585,6 +623,7 @@ function buildGIF(w, h, frames, delayCs) {
     _cWdx = new Float32Array(N); _cWdy = new Float32Array(N);
     _cDl  = new Float32Array(N); _cDs  = new Float32Array(N);
     _cCdR = new Float32Array(N); _cCdG = new Float32Array(N); _cCdB = new Float32Array(N);
+    _cBright = new Float32Array(N);
     buildCellMap();
   }
 
@@ -615,6 +654,208 @@ function buildGIF(w, h, frames, delayCs) {
     }
   }
 
+  function decompose() {
+    if (!origCanvas) return;
+    const w = imgW, h = imgH;
+    const radius = +sepS.value;
+    const origPixels = origCanvas.getContext('2d').getImageData(0, 0, w, h).data;
+    const blurCanvas = document.createElement('canvas');
+    blurCanvas.width = w; blurCanvas.height = h;
+    const blurCtx = blurCanvas.getContext('2d');
+    blurCtx.filter = `blur(${radius}px)`;
+    blurCtx.drawImage(origCanvas, 0, 0);
+    const blurPixels = blurCtx.getImageData(0, 0, w, h).data;
+    lowHslBuf = new Float32Array(w * h * 3);
+    edgeBuf   = new Float32Array(w * h * 3);
+    for (let i = 0; i < w * h; i++) {
+      const i4 = i * 4, i3 = i * 3;
+      const [hv, sv, lv] = rgbToHsl(
+        blurPixels[i4]     / 255,
+        blurPixels[i4 + 1] / 255,
+        blurPixels[i4 + 2] / 255
+      );
+      lowHslBuf[i3]     = hv;
+      lowHslBuf[i3 + 1] = sv;
+      lowHslBuf[i3 + 2] = lv;
+      edgeBuf[i3]     = origPixels[i4]     - blurPixels[i4];
+      edgeBuf[i3 + 1] = origPixels[i4 + 1] - blurPixels[i4 + 1];
+      edgeBuf[i3 + 2] = origPixels[i4 + 2] - blurPixels[i4 + 2];
+    }
+    if (!playing) drawNoise();
+  }
+
+  function drawNoiseDetail() {
+    if (!lowHslBuf) return;
+    const w = imgW, h = imgH;
+    const out = outBuf;
+    const chromaAmp = +hueS.value / 180 * 128;
+    const dL = +litS.value;
+    const dS = +satS.value;
+    const warpOn = warpChk.checked;
+    const warpR  = warpOn ? +warpS.value : 0;
+    const brightAmp = +edgeBrightS.value / 100;
+
+    for (let ci = 0; ci < ROWS * COLS; ci++) {
+      const { x: cx, y: cy, cw, ch } = cellBnds[ci];
+      const theta = Math.random() * 6.2831853;
+      const cosT = Math.cos(theta), sinT = Math.sin(theta);
+      const dR =  chromaAmp *  cosT;
+      const dG =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
+      const dB =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
+      const dl     = (Math.random() * 2 - 1) * dL;
+      const ds     = (Math.random() * 2 - 1) * dS;
+      const wdx    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+      const wdy    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+      const bright = (Math.random() * 2 - 1) * brightAmp;
+
+      for (let py = cy; py < cy + ch; py++) {
+        const rowBase = py * w;
+        for (let px = cx; px < cx + cw; px++) {
+          const i  = rowBase + px;
+          const i4 = i * 4;
+          const i3 = i * 3;
+
+          let sv = lowHslBuf[i3 + 1] + ds;
+          if (sv < 0) sv = 0; else if (sv > 100) sv = 100;
+          let lv = lowHslBuf[i3 + 2] + dl;
+          if (lv < 0) lv = 0; else if (lv > 100) lv = 100;
+          const hv = lowHslBuf[i3];
+          const sn = sv / 100, ln = lv / 100;
+          const a  = sn * (ln < 0.5 ? ln : 1 - ln);
+          const h30 = hv / 30;
+          let k, t, u;
+
+          k = h30 % 12;
+          t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+          let r = (ln - a * t) * 255;
+          k = (h30 + 8) % 12;
+          t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+          let g = (ln - a * t) * 255;
+          k = (h30 + 4) % 12;
+          t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+          let b = (ln - a * t) * 255;
+
+          r += dR; if(r<0)r=0; else if(r>255)r=255;
+          g += dG; if(g<0)g=0; else if(g>255)g=255;
+          b += dB; if(b<0)b=0; else if(b>255)b=255;
+
+          const sx  = Math.min(w-1, Math.max(0, (px + wdx) | 0));
+          const sy  = Math.min(h-1, Math.max(0, (py + wdy) | 0));
+          const ei3 = (sy * w + sx) * 3;
+          const mul = 1 + bright;
+          r += edgeBuf[ei3]     * mul; if(r<0)r=0; else if(r>255)r=255;
+          g += edgeBuf[ei3 + 1] * mul; if(g<0)g=0; else if(g>255)g=255;
+          b += edgeBuf[ei3 + 2] * mul; if(b<0)b=0; else if(b>255)b=255;
+
+          if (mlGuard.checked && fixedOverlay) {
+            const oi = i * 3;
+            r += fixedOverlay[oi];     if(r<0)r=0; else if(r>255)r=255;
+            g += fixedOverlay[oi + 1]; if(g<0)g=0; else if(g>255)g=255;
+            b += fixedOverlay[oi + 2]; if(b<0)b=0; else if(b>255)b=255;
+          }
+
+          out[i4]     = r + 0.5 | 0;
+          out[i4 + 1] = g + 0.5 | 0;
+          out[i4 + 2] = b + 0.5 | 0;
+        }
+      }
+    }
+
+    ctx.putImageData(imgDataObj, 0, 0);
+    if (blurChk.checked && blurOffscreen) {
+      blurOCtx.filter = `blur(${blurS.value}px)`;
+      blurOCtx.drawImage(canvas, 0, 0);
+      ctx.drawImage(blurOffscreen, 0, 0);
+    }
+  }
+
+  function drawNoiseDetailVoronoi() {
+    if (!lowHslBuf || !cellMap) return;
+    const N = COLS * ROWS;
+    const w = imgW, h = imgH;
+    const out = outBuf;
+    const chromaAmp = +hueS.value / 180 * 128;
+    const dL = +litS.value;
+    const dS = +satS.value;
+    const warpOn = warpChk.checked;
+    const warpR  = warpOn ? +warpS.value : 0;
+    const brightAmp = +edgeBrightS.value / 100;
+
+    for (let ci = 0; ci < N; ci++) {
+      const theta = Math.random() * 6.2831853;
+      const cosT = Math.cos(theta), sinT = Math.sin(theta);
+      _cCdR[ci] =  chromaAmp *  cosT;
+      _cCdG[ci] =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
+      _cCdB[ci] =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
+      _cDl[ci]     = (Math.random() * 2 - 1) * dL;
+      _cDs[ci]     = (Math.random() * 2 - 1) * dS;
+      _cWdx[ci]    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+      _cWdy[ci]    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+      _cBright[ci] = (Math.random() * 2 - 1) * brightAmp;
+    }
+
+    for (let py = 0; py < h; py++) {
+      const rowBase = py * w;
+      for (let px = 0; px < w; px++) {
+        const i  = rowBase + px;
+        const i4 = i * 4;
+        const i3 = i * 3;
+        const ci = cellMap[i];
+
+        let sv = lowHslBuf[i3 + 1] + _cDs[ci];
+        if (sv < 0) sv = 0; else if (sv > 100) sv = 100;
+        let lv = lowHslBuf[i3 + 2] + _cDl[ci];
+        if (lv < 0) lv = 0; else if (lv > 100) lv = 100;
+        const hv = lowHslBuf[i3];
+        const sn = sv / 100, ln = lv / 100;
+        const a  = sn * (ln < 0.5 ? ln : 1 - ln);
+        const h30 = hv / 30;
+        let k, t, u;
+
+        k = h30 % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let r = (ln - a * t) * 255;
+        k = (h30 + 8) % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let g = (ln - a * t) * 255;
+        k = (h30 + 4) % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let b = (ln - a * t) * 255;
+
+        r += _cCdR[ci]; if(r<0)r=0; else if(r>255)r=255;
+        g += _cCdG[ci]; if(g<0)g=0; else if(g>255)g=255;
+        b += _cCdB[ci]; if(b<0)b=0; else if(b>255)b=255;
+
+        const sx  = Math.min(w-1, Math.max(0, (px + _cWdx[ci]) | 0));
+        const sy  = Math.min(h-1, Math.max(0, (py + _cWdy[ci]) | 0));
+        const ei3 = (sy * w + sx) * 3;
+        const mul = 1 + _cBright[ci];
+        r += edgeBuf[ei3]     * mul; if(r<0)r=0; else if(r>255)r=255;
+        g += edgeBuf[ei3 + 1] * mul; if(g<0)g=0; else if(g>255)g=255;
+        b += edgeBuf[ei3 + 2] * mul; if(b<0)b=0; else if(b>255)b=255;
+
+        if (mlGuard.checked && fixedOverlay) {
+          const oi = i * 3;
+          r += fixedOverlay[oi];     if(r<0)r=0; else if(r>255)r=255;
+          g += fixedOverlay[oi + 1]; if(g<0)g=0; else if(g>255)g=255;
+          b += fixedOverlay[oi + 2]; if(b<0)b=0; else if(b>255)b=255;
+        }
+
+        out[i4]     = r + 0.5 | 0;
+        out[i4 + 1] = g + 0.5 | 0;
+        out[i4 + 2] = b + 0.5 | 0;
+      }
+    }
+
+    ctx.putImageData(imgDataObj, 0, 0);
+    if (blurChk.checked && blurOffscreen) {
+      blurOCtx.filter = `blur(${blurS.value}px)`;
+      blurOCtx.drawImage(canvas, 0, 0);
+      ctx.drawImage(blurOffscreen, 0, 0);
+    }
+  }
+
+
   // ── State ─────────────────────────────────────────────────────────────────
   let hslBuf     = null;
   let outBuf     = null;
@@ -631,7 +872,9 @@ function buildGIF(w, h, frames, delayCs) {
 
   let cellMap   = null;
   let cellSeeds = null;
-  let _cWdx, _cWdy, _cDl, _cDs, _cCdR, _cCdG, _cCdB;
+  let _cWdx, _cWdy, _cDl, _cDs, _cCdR, _cCdG, _cCdB, _cBright;
+  let lowHslBuf = null;
+  let edgeBuf   = null;
 
   let fixedOverlay = null;
   let blurOffscreen = null, blurOCtx = null;
@@ -888,6 +1131,10 @@ function buildGIF(w, h, frames, delayCs) {
 
   function drawNoise() {
     if (!hslBuf) return;
+    if (detailChk.checked && lowHslBuf) {
+      if (voronoiChk.checked && cellMap) { drawNoiseDetailVoronoi(); return; }
+      drawNoiseDetail(); return;
+    }
     if (voronoiChk.checked) { drawNoiseVoronoi(); return; }
     const dH  = +hueS.value;
     const dL  = +litS.value;
