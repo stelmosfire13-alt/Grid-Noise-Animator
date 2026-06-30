@@ -40,7 +40,7 @@
     .fx-card,
     .ctrl-card,
     .out-card    { grid-column: 1; }
-    .preview-pane { grid-column: 2; grid-row: 1 / 99; }
+    .preview-col  { grid-column: 2; grid-row: 1 / 99; display: flex; flex-direction: column; gap: 8px; }
 
     @media (max-width: 680px) {
       body { padding: 10px 12px; }
@@ -52,10 +52,11 @@
       .fx-card,
       .ctrl-card,
       .out-card,
-      .preview-pane { grid-column: auto; grid-row: auto; }
+      .preview-col { grid-column: auto; grid-row: auto; }
 
       .upload-card  { order: 1; }
-      .preview-pane { order: 2; min-height: 200px; }
+      .preview-col  { order: 2; }
+      .preview-pane { min-height: 200px; }
       .ctrl-card    { order: 3; }
       .grid-card    { order: 4; }
       .fx-card      { order: 5; }
@@ -169,6 +170,7 @@
       display: flex; align-items: center; justify-content: center;
       min-height: clamp(200px, 55vw, 420px);
       position: relative;
+      flex: 1;
     }
     #mainCanvas {
       display: none;
@@ -333,10 +335,6 @@
         <div class="field-label">FPS <em id="fpsV">60 fps</em></div>
         <input type="range" id="previewFps" min="1" max="180" value="60">
       </div>
-      <div class="btn-row">
-        <button class="btn btn-blue" id="playBtn"  disabled>▶ Abspielen</button>
-        <button class="btn btn-gray" id="pauseBtn" disabled>■ Stopp</button>
-      </div>
     </div>
 
     <div class="card out-card">
@@ -367,10 +365,16 @@
     </div>
 
 
-    <div class="preview-pane">
+    <div class="preview-col">
+      <div class="preview-pane">
       <span class="preview-empty" id="emptyMsg">Vorschau erscheint hier nach dem Bildladen</span>
       <canvas id="mainCanvas"></canvas>
       <div class="badge" id="badge"></div>
+      </div>
+      <div style="display:flex;gap:7px;margin-top:2px;">
+        <button class="btn btn-blue" id="playBtn" disabled style="flex:1;">▶ Abspielen</button>
+        <button class="btn btn-gray" id="pauseBtn" disabled style="flex:1;">■ Stopp</button>
+      </div>
     </div>
   </div><!-- /layout -->
 
