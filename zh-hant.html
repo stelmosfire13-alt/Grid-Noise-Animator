@@ -375,6 +375,22 @@
         <button class="btn btn-blue" id="playBtn" disabled style="flex:1;">▶ 播放</button>
         <button class="btn btn-gray" id="pauseBtn" disabled style="flex:1;">■ 停止</button>
       </div>
+      <div id="mlStats" style="display:none;padding-top:5px;font-size:0.73rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+          <span style="color:var(--muted);" id="mlNoiseLabel">雜訊注入量</span>
+          <strong id="mlNoise" style="color:var(--accent);font-size:0.78rem;"></strong>
+        </div>
+        <div style="height:3px;background:var(--border);border-radius:2px;margin-bottom:5px;overflow:hidden;">
+          <div id="mlNoiseBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.4s;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+          <span style="color:var(--muted);" id="mlFeatLabel">特徵減少</span>
+          <strong id="mlFeat" style="color:var(--accent);font-size:0.78rem;"></strong>
+        </div>
+        <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
+          <div id="mlFeatBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.4s;"></div>
+        </div>
+      </div>
     </div>
   </div><!-- /layout -->
 
@@ -526,7 +542,7 @@ function buildGIF(w, h, frames, delayCs) {
   const edgeBrightS   = document.getElementById('edgeBrightS');
   const reprocessBtn  = document.getElementById('reprocessBtn');
 
-  const redrawIfStopped = () => { if (!playing && hslBuf) drawNoise(); };
+  const redrawIfStopped = () => { if (!playing && hslBuf) drawNoise(); updateMLResistance(); };
 
   blurS.addEventListener('input', () => { document.getElementById('blurV').textContent = blurS.value + 'px'; redrawIfStopped(); });
   warpS.addEventListener('input', () => { document.getElementById('warpV').textContent = warpS.value + 'px'; redrawIfStopped(); });
@@ -565,15 +581,16 @@ function buildGIF(w, h, frames, delayCs) {
   litS.addEventListener('input', () => { document.getElementById('litV').textContent = `± ${litS.value}%`; redrawIfStopped(); });
   satS.addEventListener('input', () => { document.getElementById('satV').textContent = `± ${satS.value}%`; redrawIfStopped(); });
 
-  morphS.addEventListener('input', () => { document.getElementById('morphV').textContent = morphS.value + ' f'; });
+  morphS.addEventListener('input', () => { document.getElementById('morphV').textContent = morphS.value + ' f'; updateMLResistance(); });
 
   voronoiChk.addEventListener('change', () => {
     document.getElementById('morphField').style.display = voronoiChk.checked ? 'block' : 'none';
     if (voronoiChk.checked && hslBuf) { regenerateSeeds(); if (!playing) drawNoise(); }
     else if (!voronoiChk.checked && !playing && hslBuf) drawNoise();
+    updateMLResistance();
   });
 
-  sepS.addEventListener('input', () => { document.getElementById('sepV').textContent = sepS.value + 'px'; });
+  sepS.addEventListener('input', () => { document.getElementById('sepV').textContent = sepS.value + 'px'; updateMLResistance(); });
   edgeBrightS.addEventListener('input', () => { document.getElementById('edgeBrightV').textContent = edgeBrightS.value + '%'; redrawIfStopped(); });
   reprocessBtn.addEventListener('click', () => { if (origCanvas) decompose(); });
   detailChk.addEventListener('change', () => {
@@ -586,6 +603,7 @@ function buildGIF(w, h, frames, delayCs) {
       lowHslBuf = null; edgeBuf = null;
       if (!playing && hslBuf) drawNoise();
     }
+    updateMLResistance();
   });
 
   document.getElementById('gridSel').addEventListener('change', () => {
@@ -879,6 +897,8 @@ function buildGIF(w, h, frames, delayCs) {
   let _cWdx, _cWdy, _cDl, _cDs, _cCdR, _cCdG, _cCdB, _cBright;
   let lowHslBuf = null;
   let edgeBuf   = null;
+  let imageVar     = 0;   // per-channel signal variance of original image
+  let imageGradVar = 0;   // per-pixel gradient variance (warp noise proxy)
 
   let fixedOverlay = null;
   let blurOffscreen = null, blurOCtx = null;
@@ -1024,6 +1044,65 @@ function buildGIF(w, h, frames, delayCs) {
     playBtn.disabled = false;
     expBtn.disabled  = false;
     setStatus(`已載入: ${name}  (${img.naturalWidth} × ${img.naturalHeight})`);
+    computeImageStats();
+    if (detailChk.checked) decompose();
+    updateMLResistance();
+  }
+
+  function computeImageStats() {
+    if (!origCanvas) return;
+    const w = imgW, h = imgH;
+    const pixels = origCanvas.getContext('2d').getImageData(0, 0, w, h).data;
+    const N = w * h;
+    let sum = 0, sumSq = 0;
+    for (let i = 0; i < N; i++) {
+      const r = pixels[i*4], g = pixels[i*4+1], b = pixels[i*4+2];
+      sum   += r + g + b;
+      sumSq += r*r + g*g + b*b;
+    }
+    const mean = sum / (N * 3);
+    imageVar = Math.max(1, sumSq / (N * 3) - mean * mean);
+    let gradSum = 0;
+    for (let y = 1; y < h-1; y++) {
+      for (let x = 1; x < w-1; x++) {
+        const gx = (pixels[(y*w+x+1)*4+1] - pixels[(y*w+x-1)*4+1]) * 0.5;
+        const gy = (pixels[((y+1)*w+x)*4+1] - pixels[((y-1)*w+x)*4+1]) * 0.5;
+        gradSum += gx*gx + gy*gy;
+      }
+    }
+    imageGradVar = gradSum / ((w-2)*(h-2));
+  }
+
+  function updateMLResistance() {
+    const el = document.getElementById('mlStats');
+    if (!el || !hslBuf || imageVar === 0) return;
+    const chromaAmp = +hueS.value / 180 * 128;
+    const dL = +litS.value;
+    const dS = +satS.value;
+    const warpR = document.getElementById('warpChk').checked ? +warpS.value : 0;
+    const nChroma = chromaAmp * chromaAmp * 0.5;
+    const nLight  = Math.pow(dL / 100 * 255, 2) / 3;
+    const nSat    = Math.pow(dS / 100 * 255 * 0.4, 2) / 3;
+    const nWarp   = imageGradVar * warpR * warpR / 3;
+    const nML     = mlGuard.checked ? 18 : 0;
+    const baseNoise = nChroma + nLight + nSat + nWarp + nML;
+    // Enhanced mode: irregular boundaries + periodic regeneration bonus
+    const morphInterval = +morphS.value;
+    const nVoronoi = voronoiChk.checked
+      ? baseNoise * (0.15 + 0.25 * (1 - (morphInterval - 1) / 119))
+      : 0;
+    // Detail mode: edge layer brightness variation
+    const edgeBright = detailChk.checked ? +edgeBrightS.value : 0;
+    const sepRadius  = detailChk.checked ? +sepS.value : 0;
+    const nDetail = Math.pow(edgeBright / 100 * Math.sqrt(imageGradVar) * sepRadius / 10, 2);
+    const noiseVar = baseNoise + nVoronoi + nDetail;
+    const noisePct = Math.min(99, Math.sqrt(noiseVar) / 255 * 100);
+    const featPct  = Math.min(99, noiseVar / (imageVar + noiseVar) * 100);
+    document.getElementById('mlNoise').textContent    = noisePct.toFixed(1) + '%';
+    document.getElementById('mlFeat').textContent     = featPct.toFixed(1)  + '%';
+    document.getElementById('mlNoiseBar').style.width = noisePct + '%';
+    document.getElementById('mlFeatBar').style.width  = featPct  + '%';
+    el.style.display = 'block';
   }
 
   // ── Drawing ───────────────────────────────────────────────────────────────
