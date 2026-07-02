@@ -390,6 +390,13 @@
         <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
           <div id="mlFeatBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.4s;"></div>
         </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px;margin-bottom:2px;border-top:1px solid var(--border);padding-top:4px;">
+          <span style="color:var(--muted);" id="mlMultLabel">Данные обучения</span>
+          <strong id="mlMult" style="color:var(--accent);font-size:0.78rem;"></strong>
+        </div>
+        <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
+          <div id="mlMultBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.4s;"></div>
+        </div>
       </div>
     </div>
   </div><!-- /layout -->
@@ -1102,6 +1109,9 @@ function buildGIF(w, h, frames, delayCs) {
     document.getElementById('mlFeat').textContent     = featPct.toFixed(1)  + '%';
     document.getElementById('mlNoiseBar').style.width = noisePct + '%';
     document.getElementById('mlFeatBar').style.width  = featPct  + '%';
+    const mult = featPct >= 99 ? 99 : 1 / (1 - featPct / 100);
+    document.getElementById('mlMult').textContent     = (mult >= 10 ? '×' + mult.toFixed(0) : '×' + mult.toFixed(1));
+    document.getElementById('mlMultBar').style.width  = Math.min(100, (mult - 1) / 9 * 100) + '%';
     el.style.display = 'block';
   }
 
