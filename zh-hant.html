@@ -357,6 +357,29 @@
           <option value="gif">GIF 動畫</option>
         </select>
       </div>
+      <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;">
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="advChk" style="width:14px;height:14px">
+            <span>深度保護</span>
+          </label>
+        </div>
+        <div id="advField" style="display:none;margin-top:8px;">
+          <div class="field">
+            <div class="field-label">ε <em id="advEpsV">8</em>/255</div>
+            <input type="range" id="advEpsS" min="2" max="32" value="8">
+          </div>
+          <div class="field" style="margin-top:6px;">
+            <div class="field-label">Steps <em id="advStepsV">10</em></div>
+            <input type="range" id="advStepsS" min="3" max="30" value="10">
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+            <button class="btn btn-gray" id="loadModelBtn" style="flex:1;">準備</button>
+          </div>
+          <div id="modelStatus" style="font-size:0.72rem;color:var(--muted);margin-top:4px;">未準備 — 請點擊上方按鈕（約14MB）</div>
+          <div style="font-size:0.68rem;color:#777;margin-top:4px;line-height:1.4;">匯出MP4時對每幀套用。處理時間會增加。</div>
+        </div>
+      </div>
       <button class="btn btn-blue btn-full" id="expBtn" disabled>匯出</button>
       <div class="progress" id="prog">
         <div class="progress-fill" id="progFill"></div>
@@ -401,6 +424,8 @@
     </div>
   </div><!-- /layout -->
 
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0/dist/mobilenet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5/build/mp4-muxer.js"></script>
 <script>
 // ── GIF Encoder (self-contained, no external dependencies) ──────────────────
@@ -904,6 +929,8 @@ function buildGIF(w, h, frames, delayCs) {
   let _cWdx, _cWdy, _cDl, _cDs, _cCdR, _cCdG, _cCdB, _cBright;
   let lowHslBuf = null;
   let edgeBuf   = null;
+  let advModelReady = false;
+  let advMNInstance = null;
   let imageVar     = 0;   // per-channel signal variance of original image
   let imageGradVar = 0;   // per-pixel gradient variance (warp noise proxy)
 
@@ -1113,6 +1140,82 @@ function buildGIF(w, h, frames, delayCs) {
     document.getElementById('mlMult').textContent     = (mult >= 10 ? '×' + mult.toFixed(0) : '×' + mult.toFixed(1));
     document.getElementById('mlMultBar').style.width  = Math.min(100, (mult - 1) / 9 * 100) + '%';
     el.style.display = 'block';
+  }
+
+  // ── Adversarial Noise (PGD) ──────────────────────────────────────────────
+  document.getElementById('advChk').addEventListener('change', () => {
+    document.getElementById('advField').style.display =
+      document.getElementById('advChk').checked ? 'block' : 'none';
+  });
+  document.getElementById('advEpsS').addEventListener('input', () => {
+    document.getElementById('advEpsV').textContent = document.getElementById('advEpsS').value;
+  });
+  document.getElementById('advStepsS').addEventListener('input', () => {
+    document.getElementById('advStepsV').textContent = document.getElementById('advStepsS').value;
+  });
+  document.getElementById('loadModelBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('loadModelBtn');
+    const st  = document.getElementById('modelStatus');
+    btn.disabled = true;
+    st.textContent = '…';
+    try {
+      advMNInstance = await mobilenet.load({ version: 2, alpha: 1.0 });
+      advModelReady = true;
+      st.style.color = 'var(--accent)';
+      st.textContent = '✓ Ready';
+    } catch(e) {
+      st.textContent = 'Failed: ' + e.message;
+    }
+    btn.disabled = false;
+  });
+
+  async function applyPGD(epsilon, numSteps) {
+    if (!advMNInstance || !advModelReady) return;
+    const W = imgW, H = imgH;
+    const alpha = epsilon * 2 / numSteps;
+    const NUM_CLASSES = 1000;
+
+    const origTensor = tf.browser.fromPixels(canvas).toFloat().div(255).expandDims(0);
+
+    // Determine target class from current frame
+    const smallForClass = tf.image.resizeBilinear(origTensor, [224, 224]);
+    let rawOut;
+    try { rawOut = advMNInstance.model.predict(smallForClass); }
+    catch(_) { rawOut = advMNInstance.model.execute(smallForClass); }
+    const targetClass = (await rawOut.squeeze().argMax().array()) | 0;
+    tf.dispose([smallForClass, rawOut]);
+
+    // Random start within epsilon ball
+    let adv = tf.tidy(() =>
+      origTensor.add(tf.randomUniform(origTensor.shape, -epsilon, epsilon)).clipByValue(0, 1)
+    );
+
+    // PGD: gradient ascent projected onto epsilon ball
+    for (let s = 0; s < numSteps; s++) {
+      const newAdv = tf.tidy(() => {
+        const gradFn = tf.grad(x => {
+          const xSmall = tf.image.resizeBilinear(x, [224, 224]);
+          let logits;
+          try { logits = advMNInstance.model.predict(xSmall); }
+          catch(_) { logits = advMNInstance.model.execute(xSmall); }
+          const logitVec = logits.squeeze().slice([0], [NUM_CLASSES]);
+          const oneHot = tf.oneHot(tf.tensor1d([targetClass], 'int32'), NUM_CLASSES).squeeze();
+          return tf.losses.softmaxCrossEntropy(oneHot, logitVec).mean();
+        });
+        const grad    = gradFn(adv);
+        const stepped = adv.add(grad.sign().mul(alpha));
+        const delta   = stepped.sub(origTensor).clipByValue(-epsilon, epsilon);
+        return origTensor.add(delta).clipByValue(0, 1);
+      });
+      adv.dispose();
+      adv = newAdv;
+      await tf.nextFrame();
+    }
+
+    // Write back to canvas
+    const outPixels = await tf.browser.toPixels(adv.squeeze());
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(outPixels), W, H), 0, 0);
+    tf.dispose([origTensor, adv]);
   }
 
   // ── Drawing ───────────────────────────────────────────────────────────────
@@ -1496,6 +1599,12 @@ function buildGIF(w, h, frames, delayCs) {
         for (let f = 0; f < total; f++) {
           if (!exporting) { encoder.close(); return; }
           drawNoise();
+          if (document.getElementById('advChk').checked && advModelReady) {
+            const eps  = +document.getElementById('advEpsS').value / 255;
+            const stps = +document.getElementById('advStepsS').value;
+            setStatus(`frame ${f + 1} / ${total}`);
+            await applyPGD(eps, stps);
+          }
           const vf = new VideoFrame(canvas, { timestamp: Math.round(f * 1e6 / fps) });
           encoder.encode(vf, { keyFrame: f % 60 === 0 });
           vf.close();
