@@ -300,6 +300,10 @@
         <div class="field-label">Variance de saturation <em id="satV">± 5%</em></div>
         <input type="range" id="satS" min="0" max="25" value="5">
       </div>
+      <div class="field">
+        <div class="field-label">Cycle sync <em id="cycleNV">×1 (off)</em></div>
+        <input type="range" id="cycleNS" min="1" max="12" value="1">
+      </div>
       <div class="field" style="margin-top:4px">
         <div class="field-label">
           <span>Flou <em id="blurV">1px</em></span>
@@ -751,16 +755,27 @@ function buildGIF(w, h, frames, delayCs) {
 
     for (let ci = 0; ci < ROWS * COLS; ci++) {
       const { x: cx, y: cy, cw, ch } = cellBnds[ci];
-      const theta = Math.random() * 6.2831853;
+      let theta, dl, ds, wdx, wdy, bright;
+      if (cycleN >= 2 && _cbTheta) {
+        const ph = cycleFrame * 6.2831853 / cycleN;
+        theta = _cbTheta[ci]  + ph;
+        dl    = Math.cos(_cbDl[ci]     + ph) * dL;
+        ds    = Math.cos(_cbDs[ci]     + ph) * dS;
+        wdx   = warpOn ? Math.cos(_cbWdx[ci]   + ph) * warpR : 0;
+        wdy   = warpOn ? Math.cos(_cbWdy[ci]    + ph) * warpR : 0;
+        bright = Math.cos(_cbBright[ci] + ph) * brightAmp;
+      } else {
+        theta = Math.random() * 6.2831853;
+        dl    = (Math.random() * 2 - 1) * dL;
+        ds    = (Math.random() * 2 - 1) * dS;
+        wdx   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        wdy   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        bright = (Math.random() * 2 - 1) * brightAmp;
+      }
       const cosT = Math.cos(theta), sinT = Math.sin(theta);
       const dR =  chromaAmp *  cosT;
       const dG =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
       const dB =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
-      const dl     = (Math.random() * 2 - 1) * dL;
-      const ds     = (Math.random() * 2 - 1) * dS;
-      const wdx    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
-      const wdy    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
-      const bright = (Math.random() * 2 - 1) * brightAmp;
 
       for (let py = cy; py < cy + ch; py++) {
         const rowBase = py * w;
@@ -836,16 +851,27 @@ function buildGIF(w, h, frames, delayCs) {
     const brightAmp = +edgeBrightS.value / 100;
 
     for (let ci = 0; ci < N; ci++) {
-      const theta = Math.random() * 6.2831853;
+      let theta;
+      if (cycleN >= 2 && _cbTheta) {
+        const ph = cycleFrame * 6.2831853 / cycleN;
+        theta = _cbTheta[ci]  + ph;
+        _cDl[ci]     = Math.cos(_cbDl[ci]     + ph) * dL;
+        _cDs[ci]     = Math.cos(_cbDs[ci]     + ph) * dS;
+        _cWdx[ci]    = warpOn ? Math.cos(_cbWdx[ci]   + ph) * warpR : 0;
+        _cWdy[ci]    = warpOn ? Math.cos(_cbWdy[ci]    + ph) * warpR : 0;
+        _cBright[ci] = Math.cos(_cbBright[ci] + ph) * brightAmp;
+      } else {
+        theta = Math.random() * 6.2831853;
+        _cDl[ci]     = (Math.random() * 2 - 1) * dL;
+        _cDs[ci]     = (Math.random() * 2 - 1) * dS;
+        _cWdx[ci]    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        _cWdy[ci]    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        _cBright[ci] = (Math.random() * 2 - 1) * brightAmp;
+      }
       const cosT = Math.cos(theta), sinT = Math.sin(theta);
       _cCdR[ci] =  chromaAmp *  cosT;
       _cCdG[ci] =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
       _cCdB[ci] =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
-      _cDl[ci]     = (Math.random() * 2 - 1) * dL;
-      _cDs[ci]     = (Math.random() * 2 - 1) * dS;
-      _cWdx[ci]    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
-      _cWdy[ci]    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
-      _cBright[ci] = (Math.random() * 2 - 1) * brightAmp;
     }
 
     for (let py = 0; py < h; py++) {
@@ -931,6 +957,9 @@ function buildGIF(w, h, frames, delayCs) {
   let edgeBuf   = null;
   let advModelReady = false;
   let advMNInstance = null;
+  let cycleN = 1;
+  let cycleFrame = 0;
+  let _cbTheta, _cbDl, _cbDs, _cbWdx, _cbWdy, _cbBright;
   let imageVar     = 0;   // per-channel signal variance of original image
   let imageGradVar = 0;   // per-pixel gradient variance (warp noise proxy)
 
@@ -1218,6 +1247,33 @@ function buildGIF(w, h, frames, delayCs) {
     tf.dispose([origTensor, adv]);
   }
 
+  function regenerateBaseAngles() {
+    const N = ROWS * COLS;
+    _cbTheta  = new Float32Array(N);
+    _cbDl     = new Float32Array(N);
+    _cbDs     = new Float32Array(N);
+    _cbWdx    = new Float32Array(N);
+    _cbWdy    = new Float32Array(N);
+    _cbBright = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      _cbTheta[i]  = Math.random() * 6.2831853;
+      _cbDl[i]     = Math.random() * 6.2831853;
+      _cbDs[i]     = Math.random() * 6.2831853;
+      _cbWdx[i]    = Math.random() * 6.2831853;
+      _cbWdy[i]    = Math.random() * 6.2831853;
+      _cbBright[i] = Math.random() * 6.2831853;
+    }
+  }
+
+  document.getElementById('cycleNS').addEventListener('input', () => {
+    cycleN = parseInt(document.getElementById('cycleNS').value) || 1;
+    const v = cycleN <= 1 ? '×1 (off)' : '×' + cycleN;
+    document.getElementById('cycleNV').textContent = v;
+    cycleFrame = 0;
+    if (cycleN >= 2) regenerateBaseAngles();
+    redrawIfStopped();
+  });
+
   // ── Drawing ───────────────────────────────────────────────────────────────
   function drawOriginal() {
     if (origCanvas) ctx.drawImage(origCanvas, 0, 0);
@@ -1239,25 +1295,34 @@ function buildGIF(w, h, frames, delayCs) {
 
     for (let ci = 0; ci < N; ci++) {
       let theta, ds, dl;
-      if (isBlue) {
+      if (cycleN >= 2 && _cbTheta) {
+        const ph = cycleFrame * 6.2831853 / cycleN;
+        theta = _cbTheta[ci] + ph;
+        dl    = Math.cos(_cbDl[ci]  + ph) * dL;
+        ds    = Math.cos(_cbDs[ci]  + ph) * dS;
+        _cWdx[ci] = warpOn ? Math.cos(_cbWdx[ci] + ph) * warpR : 0;
+        _cWdy[ci] = warpOn ? Math.cos(_cbWdy[ci] + ph) * warpR : 0;
+      } else if (isBlue) {
         const checker = (((ci / COLS) | 0) + (ci % COLS)) & 1;
         const phase = frameTheta + checker * 3.1415927;
         const amp   = 0.5 + Math.random() * 0.5;
         theta = phase + (Math.random() - 0.5) * 1.0472;
         ds = Math.sin(phase) * dS * amp;
         dl = Math.cos(phase) * dL * amp;
+        _cWdx[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        _cWdy[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
       } else {
         theta = Math.random() * 6.2831853;
         ds = (Math.random() * 2 - 1) * dS;
         dl = (Math.random() * 2 - 1) * dL;
+        _cWdx[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        _cWdy[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
       }
       const cosT = Math.cos(theta), sinT = Math.sin(theta);
       _cCdR[ci] =  chromaAmp *  cosT;
       _cCdG[ci] =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
       _cCdB[ci] =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
       _cDl[ci] = dl; _cDs[ci] = ds;
-      _cWdx[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
-      _cWdy[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
     }
 
     for (let py = 0; py < h; py++) {
@@ -1348,18 +1413,29 @@ function buildGIF(w, h, frames, delayCs) {
     for (let ci = 0; ci < ROWS * COLS; ci++) {
       const { x: cx, y: cy, cw, ch } = cellBnds[ci];
 
-      let theta, ds, dl;
-      if (isBlue) {
+      let theta, ds, dl, wdx, wdy;
+      if (cycleN >= 2 && _cbTheta) {
+        const ph = cycleFrame * 6.2831853 / cycleN;
+        theta = _cbTheta[ci] + ph;
+        dl    = Math.cos(_cbDl[ci]  + ph) * dL;
+        ds    = Math.cos(_cbDs[ci]  + ph) * dS;
+        wdx   = warpOn ? Math.cos(_cbWdx[ci] + ph) * warpR : 0;
+        wdy   = warpOn ? Math.cos(_cbWdy[ci] + ph) * warpR : 0;
+      } else if (isBlue) {
         const checker = (((ci / COLS) | 0) + (ci % COLS)) & 1;
         const phase   = frameTheta + checker * 3.1415927;
         const amp     = 0.5 + Math.random() * 0.5;
         theta = phase + (Math.random() - 0.5) * 1.0472;
         ds    = Math.sin(phase) * dS * amp;
         dl    = Math.cos(phase) * dL * amp;
+        wdx   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        wdy   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
       } else {
         theta = Math.random() * 6.2831853;
         ds    = (Math.random() * 2 - 1) * dS;
         dl    = (Math.random() * 2 - 1) * dL;
+        wdx   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        wdy   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
       }
 
       const cosT  = Math.cos(theta), sinT = Math.sin(theta);
@@ -1367,9 +1443,6 @@ function buildGIF(w, h, frames, delayCs) {
       const dR =  chromaAmp *  cosT;
       const dG =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
       const dB =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
-
-      const wdx = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
-      const wdy = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
 
       for (let py = cy; py < cy + ch; py++) {
         const rowBase = py * w;
@@ -1455,6 +1528,7 @@ function buildGIF(w, h, frames, delayCs) {
         const interval = Math.max(1, parseInt(morphS.value) || 10);
         if (frameCount % interval === 0) regenerateSeeds();
       }
+      if (cycleN >= 2) cycleFrame = (cycleFrame + 1) % cycleN;
       drawNoise();
       lastTs = ts;
     }
@@ -1464,7 +1538,8 @@ function buildGIF(w, h, frames, delayCs) {
   function startPlay() {
     if (playing || exporting || !hslBuf) return;
     playing = true;
-    lastTs = 0; frameCount = 0;
+    lastTs = 0; frameCount = 0; cycleFrame = 0;
+    if (cycleN >= 2) regenerateBaseAngles();
     animId = requestAnimationFrame(loop);
     playBtn.disabled  = true;
     pauseBtn.disabled = false;
@@ -1511,6 +1586,8 @@ function buildGIF(w, h, frames, delayCs) {
   expBtn.addEventListener('click', async () => {
     if (!hslBuf || exporting) return;
     stopPlay();
+    cycleFrame = 0;
+    if (cycleN >= 2) regenerateBaseAngles();
 
     const fps   = Math.max(1, parseInt(document.getElementById('fpsIn').value)  || 60);
     const dur   = Math.max(1, Math.min(120, parseInt(document.getElementById('durIn').value) || 5));
@@ -1536,6 +1613,7 @@ function buildGIF(w, h, frames, delayCs) {
       (async () => {
         for (let f = 0; f < gifTotal; f++) {
           if (!exporting) return;
+          if (cycleN >= 2) cycleFrame = f % cycleN;
           drawNoise();
           const src = (blurChk.checked && blurOffscreen)
             ? ctx.getImageData(0, 0, imgW, imgH).data
@@ -1598,6 +1676,7 @@ function buildGIF(w, h, frames, delayCs) {
       (async () => {
         for (let f = 0; f < total; f++) {
           if (!exporting) { encoder.close(); return; }
+          if (cycleN >= 2) cycleFrame = f % cycleN;
           drawNoise();
           if (document.getElementById('advChk').checked && advModelReady) {
             const eps  = +document.getElementById('advEpsS').value / 255;
