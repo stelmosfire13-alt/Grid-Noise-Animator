@@ -339,6 +339,12 @@
         <div class="field-label">FPS <em id="fpsV">60 fps</em></div>
         <input type="range" id="previewFps" min="1" max="180" value="60">
       </div>
+      <div class="field" style="margin-top:6px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="watermarkChk" checked style="width:14px;height:14px">
+          <span>Wasserzeichen</span>
+        </label>
+      </div>
     </div>
 
     <div class="card out-card">
@@ -1393,10 +1399,10 @@ function buildGIF(w, h, frames, delayCs) {
   function drawNoise() {
     if (!hslBuf) return;
     if (detailChk.checked && lowHslBuf) {
-      if (voronoiChk.checked && cellMap) { drawNoiseDetailVoronoi(); return; }
-      drawNoiseDetail(); return;
+      if (voronoiChk.checked && cellMap) { drawNoiseDetailVoronoi(); drawWatermark(); return; }
+      drawNoiseDetail(); drawWatermark(); return;
     }
-    if (voronoiChk.checked) { drawNoiseVoronoi(); return; }
+    if (voronoiChk.checked) { drawNoiseVoronoi(); drawWatermark(); return; }
     const dH  = +hueS.value;
     const dL  = +litS.value;
     const dS  = +satS.value;
@@ -1509,6 +1515,27 @@ function buildGIF(w, h, frames, delayCs) {
       ctx.drawImage(blurOffscreen, 0, 0);
     }
   }
+
+  function drawWatermark() {
+    if (!document.getElementById('watermarkChk').checked) return;
+    const text = '🚫 No AI Learning';
+    const fontSize = Math.max(11, Math.round(Math.min(imgW, imgH) * 0.028));
+    const pad = 7;
+    ctx.save();
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.textBaseline = 'bottom';
+    const tw = ctx.measureText(text).width;
+    const x = pad;
+    const y = imgH - pad;
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = '#111';
+    ctx.fillRect(x - 4, y - fontSize - 4, tw + 8, fontSize + 8);
+    ctx.globalAlpha = 1.0;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  }
+  document.getElementById('watermarkChk').addEventListener('change', redrawIfStopped);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function setStatus(msg) { stEl.textContent = msg; }
