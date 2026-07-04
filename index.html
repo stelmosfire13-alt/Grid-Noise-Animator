@@ -1537,6 +1537,7 @@ function buildGIF(w, h, frames, delayCs) {
       blurOCtx.drawImage(canvas, 0, 0);
       ctx.drawImage(blurOffscreen, 0, 0);
     }
+    drawWatermark();
   }
 
   function drawWatermark() {
