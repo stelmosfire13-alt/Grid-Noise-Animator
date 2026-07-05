@@ -201,6 +201,11 @@
       flex: 1;
     }
     select:focus { outline: none; border-color: var(--accent); }
+    #regionOverlay {
+      position: absolute; top: 0; left: 0;
+      pointer-events: none;
+      width: 100%; height: 100%;
+    }
   </style>
 </head>
 <body>
@@ -1574,7 +1579,7 @@ function buildGIF(w, h, frames, delayCs) {
   function drawRegionOverlay() {
     const ow = overlay.width, oh = overlay.height;
     octx.clearRect(0, 0, ow, oh);
-    if (regionPoints.length < 2) return;
+    if (!drawMode || regionPoints.length < 2) return;
 
     const cr = canvas.getBoundingClientRect();
     const or = overlay.getBoundingClientRect();
@@ -1677,6 +1682,7 @@ function buildGIF(w, h, frames, delayCs) {
       btn.style.color = '';
       overlay.style.pointerEvents = 'none';
       overlay.style.cursor = '';
+      octx.clearRect(0, 0, overlay.width, overlay.height);
     }
   });
 
