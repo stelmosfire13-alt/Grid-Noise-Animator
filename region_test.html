@@ -1641,22 +1641,21 @@ function buildGIF(w, h, frames, delayCs) {
     ctx.putImageData(imgd, 0, 0);
   }
 
-  // Mouse events on overlay
-  overlay.addEventListener('mousedown', e => {
+  // Mouse / Touch events on overlay
+  function startDraw(pos) {
     if (!drawMode || !hslBuf) return;
     isDrawing = true;
     regionPoints = []; regionMask = null;
-    regionPoints.push(overlayToImage(e));
-  });
-  overlay.addEventListener('mousemove', e => {
+    regionPoints.push(pos);
+  }
+  function moveDraw(pos) {
     if (!isDrawing) return;
-    const p = overlayToImage(e);
     const last = regionPoints[regionPoints.length - 1];
-    const dx = p.x - last.x, dy = p.y - last.y;
-    if (dx * dx + dy * dy > 9) regionPoints.push(p);
+    const dx = pos.x - last.x, dy = pos.y - last.y;
+    if (dx * dx + dy * dy > 9) regionPoints.push(pos);
     drawRegionOverlay();
-  });
-  overlay.addEventListener('mouseup', e => {
+  }
+  function endDraw() {
     if (!isDrawing) return;
     isDrawing = false;
     if (regionPoints.length >= 6) {
@@ -1666,7 +1665,30 @@ function buildGIF(w, h, frames, delayCs) {
       regionPoints = [];
       octx.clearRect(0, 0, overlay.width, overlay.height);
     }
-  });
+  }
+
+  overlay.addEventListener('mousedown', e => startDraw(overlayToImage(e)));
+  overlay.addEventListener('mousemove', e => moveDraw(overlayToImage(e)));
+  overlay.addEventListener('mouseup',   () => endDraw());
+
+  function touchPos(e) {
+    const t = e.touches[0] || e.changedTouches[0];
+    return overlayToImage({ clientX: t.clientX, clientY: t.clientY });
+  }
+  overlay.addEventListener('touchstart', e => {
+    if (!drawMode) return;
+    e.preventDefault();
+    startDraw(touchPos(e));
+  }, { passive: false });
+  overlay.addEventListener('touchmove', e => {
+    if (!isDrawing) return;
+    e.preventDefault();
+    moveDraw(touchPos(e));
+  }, { passive: false });
+  overlay.addEventListener('touchend', e => {
+    e.preventDefault();
+    endDraw();
+  }, { passive: false });
 
   document.getElementById('drawRegionBtn').addEventListener('click', () => {
     drawMode = !drawMode;
