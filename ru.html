@@ -201,6 +201,11 @@
       flex: 1;
     }
     select:focus { outline: none; border-color: var(--accent); }
+    #regionOverlay {
+      position: absolute; top: 0; left: 0;
+      pointer-events: none;
+      width: 100%; height: 100%;
+    }
   </style>
 </head>
 <body>
@@ -402,11 +407,17 @@
       <div class="preview-pane">
       <span class="preview-empty" id="emptyMsg">Предпросмотр появится здесь после загрузки изображения</span>
       <canvas id="mainCanvas"></canvas>
+      <canvas id="regionOverlay"></canvas>
       <div class="badge" id="badge"></div>
       </div>
       <div style="display:flex;gap:7px;margin-top:2px;">
         <button class="btn btn-blue" id="playBtn" disabled style="flex:1;">▶ Воспроизвести</button>
         <button class="btn btn-gray" id="pauseBtn" disabled style="flex:1;">■ Стоп</button>
+      </div>
+      <div id="regionControls" style="display:none;flex-wrap:wrap;gap:5px;margin-top:6px;">
+        <button class="btn btn-gray" id="drawRegionBtn" style="flex:1;font-size:0.82rem;">✏ Область</button>
+        <button class="btn btn-gray" id="clearRegionBtn" style="flex:1;font-size:0.82rem;">✕ Сброс</button>
+        <button class="btn btn-gray" id="applyModeBtn" style="width:100%;font-size:0.82rem;">● Снаружи</button>
       </div>
       <div id="mlStats" style="display:none;padding-top:5px;font-size:0.73rem;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
@@ -1116,6 +1127,9 @@ function buildGIF(w, h, frames, delayCs) {
     computeImageStats();
     if (detailChk.checked) decompose();
     updateMLResistance();
+    if (origCanvas) origImageData = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH);
+    document.getElementById('regionControls').style.display = 'flex';
+    syncOverlaySize();
   }
 
   function computeImageStats() {
@@ -1538,6 +1552,152 @@ function buildGIF(w, h, frames, delayCs) {
   }
   document.getElementById('watermarkChk').addEventListener('change', redrawIfStopped);
 
+  // ── Region Selection (lasso) ─────────────────────────────────────────────
+  const overlay  = document.getElementById('regionOverlay');
+  const octx     = overlay.getContext('2d');
+  let regionPoints  = [];
+  let regionMask    = null;
+  let origImageData = null;
+  let isDrawing  = false;
+  let drawMode   = false;
+  let applyInside = false;
+  const _rgOff     = '✏ Область';
+  const _rgOn      = '✏ Рисование…';
+  const _rgOutside = '● Снаружи';
+  const _rgInside  = '● Внутри';
+
+  function syncOverlaySize() {
+    overlay.width  = overlay.offsetWidth  || 1;
+    overlay.height = overlay.offsetHeight || 1;
+    drawRegionOverlay();
+  }
+
+  function overlayToImage(e) {
+    const cr = canvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(imgW, (e.clientX - cr.left) * imgW / cr.width)),
+      y: Math.max(0, Math.min(imgH, (e.clientY - cr.top)  * imgH / cr.height)),
+    };
+  }
+
+  function drawRegionOverlay() {
+    const ow = overlay.width, oh = overlay.height;
+    octx.clearRect(0, 0, ow, oh);
+    if (!drawMode || regionPoints.length < 2) return;
+    const cr = canvas.getBoundingClientRect();
+    const or = overlay.getBoundingClientRect();
+    const sx = cr.width  / imgW * ow / or.width;
+    const sy = cr.height / imgH * oh / or.height;
+    const ox = (cr.left - or.left) * ow / or.width;
+    const oy = (cr.top  - or.top)  * oh / or.height;
+    octx.beginPath();
+    octx.moveTo(ox + regionPoints[0].x * sx, oy + regionPoints[0].y * sy);
+    for (let i = 1; i < regionPoints.length; i++) {
+      octx.lineTo(ox + regionPoints[i].x * sx, oy + regionPoints[i].y * sy);
+    }
+    if (!isDrawing) octx.closePath();
+    octx.strokeStyle = '#ff0';
+    octx.lineWidth   = 1.5;
+    octx.setLineDash([5, 4]);
+    octx.stroke();
+    octx.setLineDash([]);
+    if (!isDrawing && regionMask) {
+      octx.fillStyle = applyInside ? 'rgba(60,255,120,0.15)' : 'rgba(255,140,0,0.12)';
+      octx.fill();
+    }
+  }
+
+  function computeRegionMask() {
+    const off  = document.createElement('canvas');
+    off.width  = imgW; off.height = imgH;
+    const mc = off.getContext('2d');
+    mc.beginPath();
+    mc.moveTo(regionPoints[0].x, regionPoints[0].y);
+    for (let i = 1; i < regionPoints.length; i++) mc.lineTo(regionPoints[i].x, regionPoints[i].y);
+    mc.closePath();
+    mc.fillStyle = '#fff';
+    mc.fill();
+    const d = mc.getImageData(0, 0, imgW, imgH).data;
+    regionMask = new Uint8Array(imgW * imgH);
+    for (let i = 0; i < imgW * imgH; i++) regionMask[i] = d[i * 4] > 128 ? 1 : 0;
+  }
+
+  function applyRegionMask() {
+    if (!regionMask || !origImageData) return;
+    const imgd = ctx.getImageData(0, 0, imgW, imgH);
+    const nd = imgd.data, od = origImageData.data;
+    for (let i = 0; i < imgW * imgH; i++) {
+      const applyHere = applyInside ? regionMask[i] : !regionMask[i];
+      if (!applyHere) {
+        const i4 = i * 4;
+        nd[i4] = od[i4]; nd[i4+1] = od[i4+1]; nd[i4+2] = od[i4+2];
+      }
+    }
+    ctx.putImageData(imgd, 0, 0);
+  }
+
+  function startDraw(pos) {
+    if (!drawMode || !hslBuf) return;
+    isDrawing = true; regionPoints = []; regionMask = null;
+    regionPoints.push(pos);
+  }
+  function moveDraw(pos) {
+    if (!isDrawing) return;
+    const last = regionPoints[regionPoints.length - 1];
+    const dx = pos.x - last.x, dy = pos.y - last.y;
+    if (dx * dx + dy * dy > 9) regionPoints.push(pos);
+    drawRegionOverlay();
+  }
+  function endDraw() {
+    if (!isDrawing) return;
+    isDrawing = false;
+    if (regionPoints.length >= 6) { computeRegionMask(); drawRegionOverlay(); }
+    else { regionPoints = []; octx.clearRect(0, 0, overlay.width, overlay.height); }
+  }
+
+  overlay.addEventListener('mousedown', e => startDraw(overlayToImage(e)));
+  overlay.addEventListener('mousemove', e => moveDraw(overlayToImage(e)));
+  overlay.addEventListener('mouseup',   () => endDraw());
+
+  function touchPos(e) {
+    const t = e.touches[0] || e.changedTouches[0];
+    return overlayToImage({ clientX: t.clientX, clientY: t.clientY });
+  }
+  overlay.addEventListener('touchstart', e => { if (!drawMode) return; e.preventDefault(); startDraw(touchPos(e)); }, { passive: false });
+  overlay.addEventListener('touchmove',  e => { if (!isDrawing) return; e.preventDefault(); moveDraw(touchPos(e)); },  { passive: false });
+  overlay.addEventListener('touchend',   e => { e.preventDefault(); endDraw(); }, { passive: false });
+
+  document.getElementById('drawRegionBtn').addEventListener('click', () => {
+    drawMode = !drawMode;
+    const btn = document.getElementById('drawRegionBtn');
+    if (drawMode) {
+      btn.textContent = _rgOn;
+      btn.style.color = 'var(--accent)';
+      overlay.style.pointerEvents = 'auto';
+      overlay.style.cursor = 'crosshair';
+      if (playing) stopPlay();
+    } else {
+      btn.textContent = _rgOff;
+      btn.style.color = '';
+      overlay.style.pointerEvents = 'none';
+      overlay.style.cursor = '';
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+    }
+  });
+  document.getElementById('clearRegionBtn').addEventListener('click', () => {
+    regionPoints = []; regionMask = null;
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    if (!playing && hslBuf) { drawNoise(); }
+  });
+  document.getElementById('applyModeBtn').addEventListener('click', () => {
+    applyInside = !applyInside;
+    document.getElementById('applyModeBtn').textContent = applyInside ? _rgInside : _rgOutside;
+    drawRegionOverlay();
+    if (!playing && hslBuf) { drawNoise(); applyRegionMask(); }
+  });
+
+  window.addEventListener('resize', syncOverlaySize);
+
   // ── Helpers ───────────────────────────────────────────────────────────────
   function setStatus(msg) { stEl.textContent = msg; }
   function setBadge(text, cls) {
@@ -1558,6 +1718,8 @@ function buildGIF(w, h, frames, delayCs) {
       }
       if (cycleN >= 2) cycleFrame = (cycleFrame + 1) % cycleN;
       drawNoise();
+      applyRegionMask();
+      drawRegionOverlay();
       lastTs = ts;
     }
     animId = requestAnimationFrame(loop);
@@ -1643,7 +1805,8 @@ function buildGIF(w, h, frames, delayCs) {
           if (!exporting) return;
           if (cycleN >= 2) cycleFrame = f % cycleN;
           drawNoise();
-          const src = (blurChk.checked && blurOffscreen)
+          applyRegionMask();
+          const src = (regionMask || (blurChk.checked && blurOffscreen))
             ? ctx.getImageData(0, 0, imgW, imgH).data
             : outBuf;
           frames.push(quantizeToGif(src));
@@ -1712,6 +1875,7 @@ function buildGIF(w, h, frames, delayCs) {
             setStatus(`frame ${f + 1} / ${total}`);
             await applyPGD(eps, stps);
           }
+          applyRegionMask();
           const vf = new VideoFrame(canvas, { timestamp: Math.round(f * 1e6 / fps) });
           encoder.encode(vf, { keyFrame: f % 60 === 0 });
           vf.close();
