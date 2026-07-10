@@ -1578,8 +1578,9 @@ function buildGIF(w, h, frames, delayCs) {
   // ── Region Selection (lasso) ─────────────────────────────────────────────
   const overlay  = document.getElementById('regionOverlay');
   const octx     = overlay.getContext('2d');
-  let regionPoints  = [];
-  let regionMask    = null;
+  let regionPoints   = [];  // points of the polygon currently being drawn
+  let regionPolygons = [];  // completed polygons, kept so new strokes add to the selection instead of replacing it
+  let regionMask     = null;
   let origImageData = null;
   let isDrawing  = false;
   let drawMode   = false;
@@ -1606,27 +1607,44 @@ function buildGIF(w, h, frames, delayCs) {
   function drawRegionOverlay() {
     const ow = overlay.width, oh = overlay.height;
     octx.clearRect(0, 0, ow, oh);
-    if (!drawMode || regionPoints.length < 2) return;
+    if (!drawMode) return;
     const cr = canvas.getBoundingClientRect();
     const or = overlay.getBoundingClientRect();
     const sx = cr.width  / imgW * ow / or.width;
     const sy = cr.height / imgH * oh / or.height;
     const ox = (cr.left - or.left) * ow / or.width;
     const oy = (cr.top  - or.top)  * oh / or.height;
-    octx.beginPath();
-    octx.moveTo(ox + regionPoints[0].x * sx, oy + regionPoints[0].y * sy);
-    for (let i = 1; i < regionPoints.length; i++) {
-      octx.lineTo(ox + regionPoints[i].x * sx, oy + regionPoints[i].y * sy);
+
+    function tracePath(points) {
+      octx.beginPath();
+      octx.moveTo(ox + points[0].x * sx, oy + points[0].y * sy);
+      for (let i = 1; i < points.length; i++) octx.lineTo(ox + points[i].x * sx, oy + points[i].y * sy);
     }
-    if (!isDrawing) octx.closePath();
-    octx.strokeStyle = '#ff0';
-    octx.lineWidth   = 1.5;
-    octx.setLineDash([5, 4]);
-    octx.stroke();
-    octx.setLineDash([]);
-    if (!isDrawing && regionMask) {
+
+    // Already-completed regions: filled + outlined
+    if (regionPolygons.length) {
       octx.fillStyle = applyInside ? 'rgba(60,255,120,0.15)' : 'rgba(255,140,0,0.12)';
-      octx.fill();
+      octx.strokeStyle = '#ff0';
+      octx.lineWidth   = 1.5;
+      octx.setLineDash([5, 4]);
+      for (const poly of regionPolygons) {
+        tracePath(poly);
+        octx.closePath();
+        octx.fill();
+        octx.stroke();
+      }
+      octx.setLineDash([]);
+    }
+
+    // Polygon currently being drawn (outline only, no fill until closed)
+    if (regionPoints.length >= 2) {
+      tracePath(regionPoints);
+      if (!isDrawing) octx.closePath();
+      octx.strokeStyle = '#ff0';
+      octx.lineWidth   = 1.5;
+      octx.setLineDash([5, 4]);
+      octx.stroke();
+      octx.setLineDash([]);
     }
   }
 
@@ -1634,12 +1652,14 @@ function buildGIF(w, h, frames, delayCs) {
     const off  = document.createElement('canvas');
     off.width  = imgW; off.height = imgH;
     const mc = off.getContext('2d');
-    mc.beginPath();
-    mc.moveTo(regionPoints[0].x, regionPoints[0].y);
-    for (let i = 1; i < regionPoints.length; i++) mc.lineTo(regionPoints[i].x, regionPoints[i].y);
-    mc.closePath();
     mc.fillStyle = '#fff';
-    mc.fill();
+    for (const poly of regionPolygons) {
+      mc.beginPath();
+      mc.moveTo(poly[0].x, poly[0].y);
+      for (let i = 1; i < poly.length; i++) mc.lineTo(poly[i].x, poly[i].y);
+      mc.closePath();
+      mc.fill();
+    }
     const d = mc.getImageData(0, 0, imgW, imgH).data;
     regionMask = new Uint8Array(imgW * imgH);
     for (let i = 0; i < imgW * imgH; i++) regionMask[i] = d[i * 4] > 128 ? 1 : 0;
@@ -1661,8 +1681,10 @@ function buildGIF(w, h, frames, delayCs) {
 
   function startDraw(pos) {
     if (!drawMode || !hslBuf) return;
-    isDrawing = true; regionPoints = []; regionMask = null;
-    regionPoints.push(pos);
+    // Note: regionPolygons/regionMask are intentionally left alone here, so
+    // starting a new stroke adds a region instead of replacing the existing
+    // selection — use the 消去 button to clear everything.
+    isDrawing = true; regionPoints = [pos];
   }
   function moveDraw(pos) {
     if (!isDrawing) return;
@@ -1674,8 +1696,14 @@ function buildGIF(w, h, frames, delayCs) {
   function endDraw() {
     if (!isDrawing) return;
     isDrawing = false;
-    if (regionPoints.length >= 6) { computeRegionMask(); drawRegionOverlay(); }
-    else { regionPoints = []; octx.clearRect(0, 0, overlay.width, overlay.height); }
+    if (regionPoints.length >= 6) {
+      regionPolygons.push(regionPoints);
+      regionPoints = [];
+      computeRegionMask();
+    } else {
+      regionPoints = [];
+    }
+    drawRegionOverlay();
   }
 
   overlay.addEventListener('mousedown', e => startDraw(overlayToImage(e)));
@@ -1708,7 +1736,7 @@ function buildGIF(w, h, frames, delayCs) {
     }
   });
   document.getElementById('clearRegionBtn').addEventListener('click', () => {
-    regionPoints = []; regionMask = null;
+    regionPoints = []; regionPolygons = []; regionMask = null;
     octx.clearRect(0, 0, overlay.width, overlay.height);
     if (!playing && hslBuf) { drawNoise(); }
   });
