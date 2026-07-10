@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -35,7 +35,6 @@
       gap: 14px;
       align-items: start;
     }
-    /* デスクトップ: 左列に各カードを積み、preview は右列全体 */
     .upload-card,
     .grid-card,
     .fx-card,
@@ -48,7 +47,6 @@
 
       .layout { grid-template-columns: 1fr; }
 
-      /* 全カードの grid 配置をリセットして order で並べ直す */
       .upload-card,
       .grid-card,
       .fx-card,
@@ -56,7 +54,6 @@
       .out-card,
       .preview-col { grid-column: auto; grid-row: auto; }
 
-      /* モバイル順: 画像選択 → プレビュー → 再生制御 → グリッド → エフェクト → 出力 */
       .upload-card  { order: 1; }
       .preview-col  { order: 2; }
       .preview-pane { min-height: 200px; }
@@ -67,18 +64,15 @@
 
       #mainCanvas   { max-height: 48vh; }
 
-      /* タッチターゲットを広げる */
       .btn { padding: 11px 14px; font-size: 0.88rem; min-height: 44px; }
       input[type=range] { height: 28px; touch-action: none; }
       input[type=number],
       select { font-size: 1rem; padding: 6px 8px; }
 
-      /* num-row が狭い画面でも折り返せるように */
       .num-row { flex-wrap: wrap; }
       .num-row label { min-width: 80px; }
       input[type=number] { width: 72px; }
 
-      /* ML保護チェックボックスのラベルを大きく */
       #mlGuard { width: 18px; height: 18px; }
     }
 
@@ -186,7 +180,7 @@
     .preview-empty { color: var(--muted); font-size: 0.85rem; }
 
     .badge {
-      position: absolute; top: 10px; right: 10px;
+      position: absolute; top: 10px; left: 10px;
       font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
       padding: 3px 9px; border-radius: 4px;
       display: none;
@@ -218,10 +212,10 @@
   <header style="display:flex;align-items:flex-start;justify-content:space-between">
     <div>
       <h1>Grid Noise Animator</h1>
-      <p>画像をチカチカさせるツールです。</p>
+      <p>הנפשת תמונות באמצעות רעש צבע מבוסס רשת.</p>
     </div>
     <select onchange="location.href=this.value" style="font-size:0.78rem;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:4px 8px;margin-top:2px;cursor:pointer;outline:none">
-      <option value="index.html" selected>日本語</option>
+      <option value="index.html">日本語</option>
       <option value="en.html">English</option>
       <option value="ko.html">한국어</option>
       <option value="zh-hans.html">中文(简)</option>
@@ -235,7 +229,7 @@
       <option value="it.html">Italiano</option>
       <option value="pt.html">Português</option>
       <option value="el.html">Ελληνικά</option>
-      <option value="he.html">עברית</option>
+      <option value="he.html" selected>עברית</option>
       <option value="hi.html">हिन्दी</option>
       <option value="th.html">ไทย</option>
       <option value="vi.html">Tiếng Việt</option>
@@ -244,21 +238,21 @@
 
   <div class="layout">
     <div class="card upload-card">
-      <div class="card-title">画像を選択</div>
+      <div class="card-title">בחר תמונה</div>
       <div class="dz" id="dz">
         <input type="file" id="fileIn" accept="image/*">
         <img id="dzThumb" class="dz-thumb" alt="">
         <div class="dz-inner">
-          <div>クリックまたはドラッグ&amp;ドロップ</div>
+          <div>לחץ או גרור ושחרר</div>
           <div class="dz-name" id="dzName"></div>
         </div>
       </div>
     </div><!-- /upload-card -->
 
     <div class="card grid-card">
-      <div class="card-title">グリッド設定</div>
+      <div class="card-title">הגדרות רשת</div>
       <div class="num-row">
-        <label>分割数</label>
+        <label>גודל רשת</label>
         <select id="gridSel">
           <option value="16">16 × 16</option>
           <option value="32" selected>32 × 32</option>
@@ -269,73 +263,73 @@
       <div class="field" style="margin-top:8px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="checkbox" id="voronoiChk" style="width:14px;height:14px">
-          <span>拡張モード</span>
+          <span>מצב משופר</span>
         </label>
       </div>
       <div id="morphField" style="display:none;margin-top:8px">
-        <div class="field-label">変化間隔 <em id="morphV">10 f</em></div>
+        <div class="field-label">מרווח שינוי <em id="morphV">10 f</em></div>
         <input type="range" id="morphS" min="1" max="120" value="10">
       </div>
       <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
         <div class="field">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="detailChk" style="width:14px;height:14px">
-            <span>詳細モード</span>
+            <span>מצב פירוט</span>
           </label>
         </div>
         <div id="detailField" style="display:none;margin-top:8px">
           <div class="field">
-            <div class="field-label">深度 <em id="sepV">25px</em></div>
+            <div class="field-label">עומק <em id="sepV">25px</em></div>
             <input type="range" id="sepS" min="1" max="30" value="25">
           </div>
           <div class="field">
-            <div class="field-label">エッジ強度 <em id="edgeBrightV">10%</em></div>
+            <div class="field-label">עוצמת קצוות <em id="edgeBrightV">10%</em></div>
             <input type="range" id="edgeBrightS" min="0" max="100" value="10">
           </div>
-          <button class="btn btn-gray btn-full" id="reprocessBtn" disabled style="margin-top:6px">再処理</button>
+          <button class="btn btn-gray btn-full" id="reprocessBtn" disabled style="margin-top:6px">עבד מחדש</button>
         </div>
       </div>
     </div>
 
     <div class="card fx-card">
-      <div class="card-title">エフェクト設定</div>
+      <div class="card-title">הגדרות אפקט</div>
       <div class="field" style="margin-bottom:10px">
-        <div class="field-label">ノイズタイプ</div>
+        <div class="field-label">סוג רעש</div>
         <select id="noiseSel" style="font-size:0.82rem;padding:4px 7px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px">
-          <option value="white">ホワイトノイズ（ML耐性重視）</option>
-          <option value="blue">ブルーノイズ（見た目重視）</option>
+          <option value="white">רעש לבן (עמידות בפני למידת מכונה)</option>
+          <option value="blue">רעש כחול (איכות חזותית)</option>
         </select>
       </div>
       <div class="field">
-        <div class="field-label">色相の変動幅 <em id="hueV">± 15°</em></div>
+        <div class="field-label">שונות גוון <em id="hueV">± 15°</em></div>
         <input type="range" id="hueS" min="0" max="90" value="15">
       </div>
       <div class="field">
-        <div class="field-label">明度の変動幅 <em id="litV">± 5%</em></div>
+        <div class="field-label">שונות בהירות <em id="litV">± 5%</em></div>
         <input type="range" id="litS" min="0" max="25" value="5">
       </div>
       <div class="field">
-        <div class="field-label">彩度の変動幅 <em id="satV">± 5%</em></div>
+        <div class="field-label">שונות רוויה <em id="satV">± 5%</em></div>
         <input type="range" id="satS" min="0" max="25" value="5">
       </div>
       <div class="field">
-        <div class="field-label">同期サイクル <em id="cycleNV">×1 (off)</em></div>
+        <div class="field-label">מחזור סנכרון <em id="cycleNV">×1 (off)</em></div>
         <input type="range" id="cycleNS" min="1" max="12" value="1">
       </div>
       <div class="field" style="margin-top:4px">
         <div class="field-label">
-          <span>ぼかし <em id="blurV">1px</em></span>
+          <span>טשטוש <em id="blurV">1px</em></span>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;color:var(--muted)">
-            <input type="checkbox" id="blurChk" checked style="width:13px;height:13px">ON
+            <input type="checkbox" id="blurChk" checked style="width:13px;height:13px">פעיל
           </label>
         </div>
         <input type="range" id="blurS" min="1" max="10" value="1">
       </div>
       <div class="field">
         <div class="field-label">
-          <span>歪み <em id="warpV">2px</em></span>
+          <span>עיוות <em id="warpV">2px</em></span>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;color:var(--muted)">
-            <input type="checkbox" id="warpChk" checked style="width:13px;height:13px">ON
+            <input type="checkbox" id="warpChk" checked style="width:13px;height:13px">פעיל
           </label>
         </div>
         <input type="range" id="warpS" min="1" max="20" value="2">
@@ -343,16 +337,16 @@
       <div class="field" style="margin-top:10px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="checkbox" id="mlGuard" checked style="width:14px;height:14px">
-          <span>ML学習保護（高周波パターン重畳）</span>
+          <span>הגנת למידת מכונה (שכבת תדר גבוה)</span>
         </label>
         <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
-          フレーム平均後も残る固定パターンを埋め込みます。人間には不可視ですがAI特徴抽出を乱します。
+          משבץ תבנית קבועה השורדת מיצוע פריימים. בלתי נראית לבני אדם אך משבשת חילוץ מאפיינים של בינה מלאכותית.
         </div>
       </div>
     </div>
 
     <div class="card ctrl-card">
-      <div class="card-title">プレビュー制御</div>
+      <div class="card-title">בקרות תצוגה מקדימה</div>
       <div class="field" style="margin-bottom:10px">
         <div class="field-label">FPS <em id="fpsV">60 fps</em></div>
         <input type="range" id="previewFps" min="1" max="180" value="60">
@@ -360,36 +354,36 @@
       <div class="field" style="margin-top:6px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="checkbox" id="watermarkChk" checked style="width:14px;height:14px">
-          <span>透かし</span>
+          <span>סימן מים</span>
         </label>
       </div>
     </div>
 
     <div class="card out-card">
-      <div class="card-title">動画として出力</div>
+      <div class="card-title">ייצוא וידאו</div>
       <div class="num-row">
-        <label>フレームレート</label>
+        <label>קצב פריימים</label>
         <input type="number" id="fpsIn" value="60" min="1" max="60">
         <span>fps</span>
       </div>
       <div class="num-row">
-        <label>録画時間</label>
+        <label>משך זמן</label>
         <input type="number" id="durIn" value="1"  min="1" max="120">
-        <span>秒</span>
+        <span>שנ'</span>
       </div>
       <div class="num-row">
-        <label>出力形式</label>
+        <label>פורמט</label>
         <select id="formatSel">
           <option value="mp4" selected>MP4 (H.264)</option>
           <option value="webm">WebM (VP9)</option>
-          <option value="gif">GIF アニメ</option>
+          <option value="gif">אנימציית GIF</option>
         </select>
       </div>
       <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;">
         <div class="field">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="advChk" style="width:14px;height:14px">
-            <span>深層保護</span>
+            <span>הגנה עמוקה</span>
           </label>
         </div>
         <div id="advField" style="display:none;margin-top:8px;">
@@ -402,53 +396,53 @@
             <input type="range" id="advStepsS" min="3" max="30" value="10">
           </div>
           <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
-            <button class="btn btn-gray" id="loadModelBtn" style="flex:1;">準備</button>
+            <button class="btn btn-gray" id="loadModelBtn" style="flex:1;">הכן</button>
           </div>
-          <div id="modelStatus" style="font-size:0.72rem;color:var(--muted);margin-top:4px;">未準備 — 「準備」ボタンを押してください（約14MB）</div>
-          <div style="font-size:0.68rem;color:#777;margin-top:4px;line-height:1.4;">MP4エクスポート時に各フレームへ適用されます。処理時間が増加します。</div>
+          <div id="modelStatus" style="font-size:0.72rem;color:var(--muted);margin-top:4px;">לא מוכן — לחץ על הכן (~14 MB)</div>
+          <div style="font-size:0.68rem;color:#777;margin-top:4px;line-height:1.4;">מוחל על כל פריים בעת ייצוא MP4. זמן העיבוד יגדל.</div>
         </div>
       </div>
-      <button class="btn btn-blue btn-full" id="expBtn" disabled>動画を出力</button>
+      <button class="btn btn-blue btn-full" id="expBtn" disabled>ייצוא</button>
       <div class="progress" id="prog">
         <div class="progress-fill" id="progFill"></div>
       </div>
-      <div class="status" id="st">画像を読み込んでください</div>
+      <div class="status" id="st">טען תמונה כדי להתחיל</div>
     </div>
 
 
     <div class="preview-col">
       <div class="preview-pane">
-      <span class="preview-empty" id="emptyMsg">画像を読み込むとここに表示されます</span>
+      <span class="preview-empty" id="emptyMsg">התצוגה המקדימה תופיע כאן לאחר טעינת תמונה</span>
       <canvas id="mainCanvas"></canvas>
       <canvas id="regionOverlay"></canvas>
       <div class="badge" id="badge"></div>
       </div>
       <div style="display:flex;gap:7px;margin-top:2px;">
-        <button class="btn btn-blue" id="playBtn" disabled style="flex:1;">▶ 再生</button>
-        <button class="btn btn-gray" id="pauseBtn" disabled style="flex:1;">■ 停止</button>
+        <button class="btn btn-blue" id="playBtn" disabled style="flex:1;">▶ נגן</button>
+        <button class="btn btn-gray" id="pauseBtn" disabled style="flex:1;">■ עצור</button>
       </div>
       <div id="regionControls" style="display:none;flex-wrap:wrap;gap:5px;margin-top:6px;">
-        <button class="btn btn-gray" id="drawRegionBtn" style="flex:1;font-size:0.82rem;">✏ 範囲指定</button>
-        <button class="btn btn-gray" id="clearRegionBtn" style="flex:1;font-size:0.82rem;">✕ 消去</button>
-        <button class="btn btn-gray" id="applyModeBtn" style="width:100%;font-size:0.82rem;">● 外側に適用</button>
+        <button class="btn btn-gray" id="drawRegionBtn" style="flex:1;font-size:0.82rem;">✏ סמן אזור</button>
+        <button class="btn btn-gray" id="clearRegionBtn" style="flex:1;font-size:0.82rem;">✕ נקה</button>
+        <button class="btn btn-gray" id="applyModeBtn" style="width:100%;font-size:0.82rem;">● מחוץ</button>
       </div>
       <div id="mlStats" style="display:none;padding-top:5px;font-size:0.73rem;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
-          <span style="color:var(--muted);" id="mlNoiseLabel">ノイズ注入量</span>
+          <span style="color:var(--muted);" id="mlNoiseLabel">הזרקת רעש</span>
           <strong id="mlNoise" style="color:var(--accent);font-size:0.78rem;"></strong>
         </div>
         <div style="height:3px;background:var(--border);border-radius:2px;margin-bottom:5px;overflow:hidden;">
           <div id="mlNoiseBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.4s;"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
-          <span style="color:var(--muted);" id="mlFeatLabel">特徴量減少</span>
+          <span style="color:var(--muted);" id="mlFeatLabel">הפחתת מאפיינים</span>
           <strong id="mlFeat" style="color:var(--accent);font-size:0.78rem;"></strong>
         </div>
         <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
           <div id="mlFeatBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.4s;"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px;margin-bottom:2px;border-top:1px solid var(--border);padding-top:4px;">
-          <span style="color:var(--muted);" id="mlMultLabel">必要学習データ</span>
+          <span style="color:var(--muted);" id="mlMultLabel">נתוני אימון</span>
           <strong id="mlMult" style="color:var(--accent);font-size:0.78rem;"></strong>
         </div>
         <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
@@ -476,7 +470,7 @@ const GIF_PALETTE = (() => {
   return p;
 })();
 
-let _gifLut = null;  // 5-bit RGB → palette index, built lazily
+let _gifLut = null;
 function getGifLut() {
   if (_gifLut) return _gifLut;
   _gifLut = new Uint8Array(32768);
@@ -517,7 +511,7 @@ function lzwEncode(indices) {
   let prefix = indices[0];
   for (let i = 1; i < indices.length; i++) {
     const px = indices[i];
-    const key = (prefix << 8) | px;  // unique: px is always 0-255
+    const key = (prefix << 8) | px;
     if (table.has(key)) {
       prefix = table.get(key);
     } else {
@@ -542,16 +536,16 @@ function buildGIF(w, h, frames, delayCs) {
   const W = n => [n & 0xFF, n >> 8 & 0xFF];
 
   B(...[...'GIF89a'].map(c => c.charCodeAt(0)),
-    ...W(w), ...W(h), 0xF7, 0, 0);  // header + screen descriptor (256-color global palette)
+    ...W(w), ...W(h), 0xF7, 0, 0);
   parts.push(GIF_PALETTE);
   B(0x21, 0xFF, 0x0B,
     ...[...'NETSCAPE2.0'].map(c => c.charCodeAt(0)),
-    3, 1, 0, 0, 0);  // loop forever
+    3, 1, 0, 0, 0);
 
   for (const idx of frames) {
-    B(0x21, 0xF9, 4, 0, ...W(delayCs), 0, 0);   // graphic control
-    B(0x2C, ...W(0), ...W(0), ...W(w), ...W(h), 0); // image descriptor
-    B(8);                                            // min code size = 8
+    B(0x21, 0xF9, 4, 0, ...W(delayCs), 0, 0);
+    B(0x2C, ...W(0), ...W(0), ...W(w), ...W(h), 0);
+    B(8);
     const cmp = lzwEncode(idx);
     const sub = [];
     for (let p = 0; p < cmp.length; p += 255) {
@@ -562,7 +556,7 @@ function buildGIF(w, h, frames, delayCs) {
     sub.push(0);
     parts.push(new Uint8Array(sub));
   }
-  B(0x3B);  // trailer
+  B(0x3B);
 
   const total = parts.reduce((s, p) => s + p.length, 0);
   const out = new Uint8Array(total);
@@ -576,7 +570,7 @@ function buildGIF(w, h, frames, delayCs) {
   'use strict';
 
   let COLS = 32, ROWS = 32;
-  const MAX_W = 640;  // display cap (pixels per second budget)
+  const MAX_W = 640;
 
   // ── DOM refs ─────────────────────────────────────────────────────────────
   const dz       = document.getElementById('dz');
@@ -618,16 +612,16 @@ function buildGIF(w, h, frames, delayCs) {
   mlGuard.addEventListener('change', redrawIfStopped);
 
   (function () {
-    const THUMB_HIT = 32; // px: how close to thumb center touch must land
+    const THUMB_HIT = 32;
     document.querySelectorAll('input[type=range]').forEach(slider => {
       let pid = null;
       slider.addEventListener('pointerdown', e => {
         if (e.pointerType !== 'touch') return;
-        e.preventDefault(); // always block default jump-to-click behavior
+        e.preventDefault();
         const r = slider.getBoundingClientRect();
         const ratio = (+slider.value - +slider.min) / (+slider.max - +slider.min);
         const thumbX = r.left + ratio * r.width;
-        if (Math.abs(e.clientX - thumbX) > THUMB_HIT) return; // not on thumb — ignore
+        if (Math.abs(e.clientX - thumbX) > THUMB_HIT) return;
         slider.setPointerCapture(e.pointerId);
         pid = e.pointerId;
       });
@@ -967,11 +961,11 @@ function buildGIF(w, h, frames, delayCs) {
 
 
   // ── State ─────────────────────────────────────────────────────────────────
-  let hslBuf     = null;  // Float32Array  h0,s0,l0, h1,s1,l1 ... (per pixel)
-  let outBuf     = null;  // Uint8ClampedArray RGBA output
-  let imgDataObj = null;  // ImageData wrapping outBuf
-  let origCanvas = null;  // offscreen canvas holding the scaled original
-  let cellBnds   = null;  // [{x,y,cw,ch}] for each of ROWS×COLS cells
+  let hslBuf     = null;
+  let outBuf     = null;
+  let imgDataObj = null;
+  let origCanvas = null;
+  let cellBnds   = null;
   let imgW = 0, imgH = 0;
 
   let animId      = null;
@@ -993,11 +987,11 @@ function buildGIF(w, h, frames, delayCs) {
   let imageVar     = 0;   // per-channel signal variance of original image
   let imageGradVar = 0;   // per-pixel gradient variance (warp noise proxy)
 
-  let fixedOverlay = null;  // Float32Array [r,g,b,...] fixed adversarial pattern per pixel
-  let blurOffscreen = null, blurOCtx = null;  // ぼかし用オフスクリーンキャンバス
+  let fixedOverlay = null;
+  let blurOffscreen = null, blurOCtx = null;
 
   // ── Color math ────────────────────────────────────────────────────────────
-  function rgbToHsl(r, g, b) {  // r,g,b ∈ [0,1]  →  [h∈[0,360), s∈[0,100], l∈[0,100]]
+  function rgbToHsl(r, g, b) {
     const max = r > g ? (r > b ? r : b) : (g > b ? g : b);
     const min = r < g ? (r < b ? r : b) : (g < b ? g : b);
     const l = (max + min) * 0.5;
@@ -1012,15 +1006,9 @@ function buildGIF(w, h, frames, delayCs) {
   }
 
   // ── ML-protection overlay ────────────────────────────────────────────────
-  // Generates a fixed high-frequency sinusoidal pattern seeded from the image.
-  // - Amplitude ~6/255 (below human JND at normal viewing distance)
-  // - Spatial frequency: period 2-5 px → above human CSF cutoff (~30 cpd)
-  // - Zero-mean per channel (no DC shift)
-  // - Survives temporal frame averaging; disrupts CNN feature maps
   function generateOverlay(pixels, w, h) {
     const overlay = new Float32Array(w * h * 3);
 
-    // Derive a deterministic seed from image content
     let seed = 0x12345678;
     const step = Math.max(1, ((w * h) / 512) | 0);
     for (let i = 0; i < w * h; i += step) {
@@ -1033,15 +1021,15 @@ function buildGIF(w, h, frames, delayCs) {
       return (seed >>> 0) / 0x100000000;
     }
 
-    const AMP = 6;           // total amplitude budget per channel (RGB units)
-    const N   = 5;           // sinusoidal components per channel
+    const AMP = 6;
+    const N   = 5;
     const a   = AMP / N;
 
     for (let ch = 0; ch < 3; ch++) {
       for (let k = 0; k < N; k++) {
-        const period = 2 + rand() * 3;          // 2–5 px period (high frequency)
+        const period = 2 + rand() * 3;
         const freq   = 1 / period;
-        const angle  = rand() * Math.PI;        // random orientation
+        const angle  = rand() * Math.PI;
         const phase  = rand() * Math.PI * 2;
         const cx     = Math.cos(angle);
         const cy     = Math.sin(angle);
@@ -1053,7 +1041,6 @@ function buildGIF(w, h, frames, delayCs) {
           }
         }
       }
-      // Remove residual DC so spatial mean is exactly zero
       let sum = 0;
       for (let i = ch; i < overlay.length; i += 3) sum += overlay[i];
       const mean = sum / (w * h);
@@ -1076,7 +1063,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   function loadFile(file) {
     stopAll();
-    setStatus('読み込み中...');
+    setStatus('טוען...');
     const reader = new FileReader();
     reader.onload = ev => {
       const url = ev.target.result;
@@ -1092,22 +1079,18 @@ function buildGIF(w, h, frames, delayCs) {
   // ── Image processing ──────────────────────────────────────────────────────
   function processImage(img, name) {
     let w = img.naturalWidth, h = img.naturalHeight;
-    // Scale down if too wide
     if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
-    // Snap to COLS/ROWS multiples so cells align perfectly
     w = Math.max(COLS, Math.round(w / COLS) * COLS);
     h = Math.max(ROWS, Math.round(h / ROWS) * ROWS);
     imgW = w; imgH = h;
 
     canvas.width = w; canvas.height = h;
 
-    // Store scaled original in an offscreen canvas
     origCanvas = document.createElement('canvas');
     origCanvas.width = w; origCanvas.height = h;
     const oc = origCanvas.getContext('2d');
     oc.drawImage(img, 0, 0, w, h);
 
-    // Convert every pixel to HSL and store in hslBuf
     const pixels = oc.getImageData(0, 0, w, h).data;
     hslBuf = new Float32Array(w * h * 3);
     for (let i = 0; i < w * h; i++) {
@@ -1121,18 +1104,15 @@ function buildGIF(w, h, frames, delayCs) {
       hslBuf[i * 3 + 2] = lv;
     }
 
-    // Fixed adversarial overlay (image-specific, survives frame averaging)
     fixedOverlay = generateOverlay(pixels, w, h);
     blurOffscreen = document.createElement('canvas');
     blurOffscreen.width = w; blurOffscreen.height = h;
     blurOCtx = blurOffscreen.getContext('2d');
 
-    // Reusable output buffer (alpha always 255)
     outBuf = new Uint8ClampedArray(w * h * 4);
     for (let i = 3; i < outBuf.length; i += 4) outBuf[i] = 255;
     imgDataObj = new ImageData(outBuf, w, h);
 
-    // Pre-compute pixel extents for every cell
     const cellW = w / COLS, cellH = h / ROWS;
     cellBnds = new Array(ROWS * COLS);
     for (let row = 0; row < ROWS; row++) {
@@ -1150,7 +1130,7 @@ function buildGIF(w, h, frames, delayCs) {
     drawOriginal();
     playBtn.disabled = false;
     expBtn.disabled  = false;
-    setStatus(`読み込み完了: ${name}  (${img.naturalWidth} × ${img.naturalHeight})`);
+    setStatus(`נטען: ${name}  (${img.naturalWidth} × ${img.naturalHeight})`);
     computeImageStats();
     if (detailChk.checked) decompose();
     updateMLResistance();
@@ -1497,7 +1477,6 @@ function buildGIF(w, h, frames, delayCs) {
           const i  = rowBase + px;
           const i4 = i * 4;
 
-          // 変位後の参照座標（最近傍サンプリング）
           let i3;
           if (warpOn) {
             const sx = Math.min(w - 1, Math.max(0, (px + wdx) | 0));
@@ -1535,7 +1514,6 @@ function buildGIF(w, h, frames, delayCs) {
           g += dG; if (g < 0) g = 0; else if (g > 255) g = 255;
           b += dB; if (b < 0) b = 0; else if (b > 255) b = 255;
 
-          // Fixed adversarial overlay (元座標基準で重畳 → 時間平均で残る)
           if (mlGuard.checked && fixedOverlay) {
             const oi = i * 3;
             r += fixedOverlay[oi];     if (r < 0) r = 0; else if (r > 255) r = 255;
@@ -1552,7 +1530,6 @@ function buildGIF(w, h, frames, delayCs) {
 
     ctx.putImageData(imgDataObj, 0, 0);
 
-    // ぼかし: オフスクリーンにblur付きで描いて主キャンバスに戻す
     if (blurChk.checked && blurOffscreen) {
       blurOCtx.filter = `blur(${blurS.value}px)`;
       blurOCtx.drawImage(canvas, 0, 0);
@@ -1592,10 +1569,10 @@ function buildGIF(w, h, frames, delayCs) {
   let isDrawing  = false;
   let drawMode   = false;
   let applyInside = false;
-  const _rgOff     = '✏ 範囲指定';
-  const _rgOn      = '✏ 描画中…';
-  const _rgOutside = '● 外側に適用';
-  const _rgInside  = '● 内側に適用';
+  const _rgOff     = '✏ סמן אזור';
+  const _rgOn      = '✏ מצייר… (גרור)';
+  const _rgOutside = '● מחוץ';
+  const _rgInside  = '● בפנים';
 
   function syncOverlaySize() {
     overlay.width  = overlay.offsetWidth  || 1;
@@ -1791,8 +1768,8 @@ function buildGIF(w, h, frames, delayCs) {
     animId = requestAnimationFrame(loop);
     playBtn.disabled  = true;
     pauseBtn.disabled = false;
-    setBadge('▶ 再生中', 'playing');
-    setStatus('再生中… 止めると1フレームが見えます');
+    setBadge('▶ מתנגן', 'playing');
+    setStatus('מתנגן… השהיה תחשוף פריים מעורבב בודד');
   }
 
   function stopPlay() {
@@ -1801,7 +1778,7 @@ function buildGIF(w, h, frames, delayCs) {
     playBtn.disabled  = !hslBuf;
     pauseBtn.disabled = true;
     setBadge('');
-    setStatus('停止しました（最終フレームを表示）');
+    setStatus('נעצר (מציג את הפריים האחרון)');
   }
 
   function stopAll() {
@@ -1827,7 +1804,7 @@ function buildGIF(w, h, frames, delayCs) {
     prog.style.display = 'none'; progFill.style.width = '0%';
     setBadge('');
     playBtn.disabled = false; expBtn.disabled = false;
-    setStatus(`出力完了  ${(blob.size / 1048576).toFixed(1)} MB  (${fps} fps, ${dur} 秒)`);
+    setStatus(`הושלם  ${(blob.size / 1048576).toFixed(1)} MB  (${fps} fps, ${dur} שנ')`);
   }
 
   // ── Export ────────────────────────────────────────────────────────────────
@@ -1846,17 +1823,16 @@ function buildGIF(w, h, frames, delayCs) {
     playBtn.disabled = true; pauseBtn.disabled = true; expBtn.disabled = true;
     prog.style.display = 'block'; progFill.style.width = '0%';
     setBadge('● REC', 'recording');
-    setStatus(`録画中… 0 / ${total} フレーム`);
+    setStatus(`מקליט… 0 / ${total} פריימים`);
 
     if (fmt === 'gif') {
-      // ── GIF: 自前エンコーダー（外部依存なし）────────────────────────────
-      const gifFps   = Math.min(fps, 50);          // GIF 実用上限 50fps
-      const delayCs  = Math.max(2, Math.round(100 / gifFps));  // centiseconds
+      const gifFps   = Math.min(fps, 50);
+      const delayCs  = Math.max(2, Math.round(100 / gifFps));
       const gifTotal = Math.round(dur * gifFps);
 
-      setStatus('GIF パレット準備中...');
+      setStatus('מכין פלטת GIF...');
       await new Promise(r => setTimeout(r, 0));
-      getGifLut();  // lazy LUT 構築（初回のみ ~50ms）
+      getGifLut();
 
       const frames = [];
       (async () => {
@@ -1865,37 +1841,35 @@ function buildGIF(w, h, frames, delayCs) {
           if (cycleN >= 2) cycleFrame = f % cycleN;
           drawNoise();
           applyRegionMask();
-          // ぼかし有効時はキャンバスから読み直す（ぼかし後のピクセルを使う）
           const src = (regionMask || (blurChk.checked && blurOffscreen))
             ? ctx.getImageData(0, 0, imgW, imgH).data
             : outBuf;
           frames.push(quantizeToGif(src));
           progFill.style.width = ((f + 1) / gifTotal * 100).toFixed(1) + '%';
-          setStatus(`GIF 録画中… ${f + 1} / ${gifTotal} フレーム`);
+          setStatus(`מקודד GIF… ${f + 1} / ${gifTotal} פריימים`);
           if (f % 10 === 9) await new Promise(r => setTimeout(r, 0));
         }
         if (!exporting) return;
-        setStatus('GIF エンコード中...');
+        setStatus('מקודד GIF...');
         await new Promise(r => setTimeout(r, 0));
         const data = buildGIF(imgW, imgH, frames, delayCs);
         exporting = false;
         exportDone(new Blob([data], { type: 'image/gif' }), 'gif', gifFps, dur);
-      })().catch(e => { stopAll(); setStatus('GIF エラー: ' + e.message); });
+      })().catch(e => { stopAll(); setStatus('שגיאת GIF: ' + e.message); });
 
     } else if (fmt === 'mp4') {
       // ── MP4: WebCodecs (VideoEncoder) + mp4-muxer ────────────────────────
       if (!window.VideoEncoder) {
         stopAll();
-        setStatus('MP4出力はChrome / Edge / Safari 16.4以降が必要です');
+        setStatus('ייצוא MP4 דורש Chrome / Edge / Safari 16.4 ומעלה');
         return;
       }
       if (!window.Mp4Muxer) {
         stopAll();
-        setStatus('mp4-muxer の読み込みに失敗しました（オフライン？）');
+        setStatus('טעינת mp4-muxer נכשלה (מצב לא מקוון?)');
         return;
       }
 
-      // H.264コーデック候補を順に試す
       const codecCandidates = ['avc1.42001f', 'avc1.4d0028', 'avc1.640028'];
       let chosenCodec = null;
       for (const c of codecCandidates) {
@@ -1905,7 +1879,7 @@ function buildGIF(w, h, frames, delayCs) {
         } catch {}
       }
       if (!chosenCodec) {
-        stopAll(); setStatus('H.264エンコーダーが見つかりません'); return;
+        stopAll(); setStatus('לא נמצא מקודד H.264'); return;
       }
 
       const { Muxer, ArrayBufferTarget } = window.Mp4Muxer;
@@ -1918,7 +1892,7 @@ function buildGIF(w, h, frames, delayCs) {
 
       const encoder = new VideoEncoder({
         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-        error:  (e) => { stopAll(); setStatus('エンコードエラー: ' + e.message); },
+        error:  (e) => { stopAll(); setStatus('שגיאת קידוד: ' + e.message); },
       });
       encoder.configure({
         codec: chosenCodec, width: imgW, height: imgH,
@@ -1942,7 +1916,7 @@ function buildGIF(w, h, frames, delayCs) {
           vf.close();
           while (encoder.encodeQueueSize > 10) await new Promise(r => setTimeout(r, 5));
           progFill.style.width = ((f + 1) / total * 100).toFixed(1) + '%';
-          setStatus(`MP4 録画中… ${f + 1} / ${total} フレーム`);
+          setStatus(`מקליט MP4… ${f + 1} / ${total} פריימים`);
           if (f % 5 === 4) await new Promise(r => setTimeout(r, 0));
         }
         if (!exporting) return;
@@ -1950,10 +1924,9 @@ function buildGIF(w, h, frames, delayCs) {
         muxer.finalize();
         exporting = false;
         exportDone(new Blob([target.buffer], { type: 'video/mp4' }), 'mp4', fps, dur);
-      })().catch(e => { stopAll(); setStatus('MP4エラー: ' + e.message); });
+      })().catch(e => { stopAll(); setStatus('שגיאת MP4: ' + e.message); });
 
     } else {
-      // ── WebM: MediaRecorder ───────────────────────────────────────────────
       const codecs = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
       const mime   = codecs.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
 
@@ -1967,7 +1940,7 @@ function buildGIF(w, h, frames, delayCs) {
         exporting = false;
         exportDone(new Blob(chunks, { type: mime.split(';')[0] }), 'webm', fps, dur);
       };
-      recorder.onerror = () => { stopAll(); setStatus('録画中にエラーが発生しました。'); };
+      recorder.onerror = () => { stopAll(); setStatus('אירעה שגיאה במהלך ההקלטה.'); };
 
       recorder.start(200);
       let frame = 0;
@@ -1976,7 +1949,7 @@ function buildGIF(w, h, frames, delayCs) {
         drawNoise();
         frame++;
         progFill.style.width = (frame / total * 100).toFixed(1) + '%';
-        setStatus(`WebM 録画中… ${frame} / ${total} フレーム  (${(frame / fps).toFixed(1)} 秒)`);
+        setStatus(`מקליט WebM… ${frame} / ${total} פריימים  (${(frame / fps).toFixed(1)} שנ')`);
         if (frame >= total) { clearInterval(expInterval); expInterval = null; recorder.stop(); }
       }, 1000 / fps);
     }
@@ -1986,15 +1959,15 @@ function buildGIF(w, h, frames, delayCs) {
 </script>
 
 <footer style="text-align:center; padding:18px 0 14px; margin-top:10px;">
-  <img id="accessCounter" alt="アクセスカウンター" style="height:20px; vertical-align:middle; opacity:0; transition:opacity 0.3s;">
+  <img id="accessCounter" alt="מונה כניסות" style="height:20px; vertical-align:middle; opacity:0; transition:opacity 0.3s;">
 </footer>
 <script>
   (function () {
     const img = document.getElementById('accessCounter');
-    const pageUrl = encodeURIComponent('https://grid-noise-animator.vercel.app/index.html');
+    const pageUrl = encodeURIComponent('https://grid-noise-animator.vercel.app/he.html');
     img.src = 'https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=' + pageUrl
             + '&count_bg=%236c8ef5&title_bg=%2316161a&icon=&icon_color=%23dde0f0'
-            + '&title=%E3%82%A2%E3%82%AF%E3%82%BB%E3%82%B9&edge_flat=true';
+            + '&title=Visits&edge_flat=true';
     img.onload  = () => { img.style.opacity = '1'; };
     img.onerror = () => { img.style.display = 'none'; };
   })();
