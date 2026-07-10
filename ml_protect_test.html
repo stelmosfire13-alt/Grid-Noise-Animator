@@ -69,8 +69,6 @@
       .fx-card      { order: 5; }
       .out-card     { order: 6; }
 
-      #mainCanvas   { max-height: 48vh; }
-
       /* タッチターゲットを広げる */
       .btn { padding: 11px 14px; font-size: 0.88rem; min-height: 44px; }
       input[type=range] { height: 28px; touch-action: none; }
@@ -396,6 +394,17 @@
         <div class="field-label" style="margin-top:8px">保護強度 <em id="mlAmpV">16</em>/255</div>
         <input type="range" id="mlAmpS" min="6" max="40" value="16">
       </div>
+      <div class="field" style="margin-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="msgChk" checked style="width:14px;height:14px">
+          <span>隠しメッセージを埋め込む</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          人間には見えない機械可読の宣言文を埋め込みます（実験的機能・テスト版限定）。フレーム平均で復元できるかは下の検証カードで確認できます。動画書き出し後の圧縮への耐性は未検証です。
+        </div>
+        <input type="text" id="msgText" value="NO-AI-TRAINING" maxlength="32" style="width:100%;margin-top:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:6px 8px;font-size:0.82rem;box-sizing:border-box;">
+        <div style="font-size:10px;color:#777;margin-top:3px;text-align:right;"><span id="msgLenV">15</span>/32文字</div>
+      </div>
     </div>
 
     <div class="card ctrl-card">
@@ -529,6 +538,7 @@
             <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">平均絶対誤差</span><strong id="avgMAE"></strong></div>
             <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">PSNR</span><strong id="avgPSNR"></strong></div>
             <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">判定</span><strong id="avgVerdict"></strong></div>
+            <div style="display:flex;justify-content:space-between;margin-top:5px;border-top:1px solid var(--border);padding-top:4px;"><span style="color:var(--muted);">復元された隠しメッセージ</span><strong id="avgMsg" style="color:var(--accent);"></strong></div>
           </div>
         </div>
       </div>
@@ -724,25 +734,29 @@ function buildGIF(w, h, frames, delayCs) {
       previewPane.style.height = h + 'px';
     }
     function onMouseMove(ev) { apply(ev.clientX, ev.clientY); }
-    function onMouseUp() {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    }
     function onTouchMove(ev) {
       ev.preventDefault();
       const t = ev.touches[0];
       apply(t.clientX, t.clientY);
     }
-    function onTouchEnd() {
+    // Both cleanups tear down every listener added below, regardless of
+    // which input ended the drag: a touch-started drag still leaves the
+    // mouse listeners attached otherwise, and mobile browsers synthesize a
+    // mousemove/mouseup/click after every tap — the very next tap anywhere
+    // on the page (e.g. Play) would then replay stale drag math and snap
+    // the pane down to its min-width/min-height.
+    function cleanup() {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', cleanup);
       document.removeEventListener('touchmove', onTouchMove);
-      document.removeEventListener('touchend', onTouchEnd);
-      document.removeEventListener('touchcancel', onTouchEnd);
+      document.removeEventListener('touchend', cleanup);
+      document.removeEventListener('touchcancel', cleanup);
     }
     document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('mouseup', cleanup);
     document.addEventListener('touchmove', onTouchMove, { passive: false });
-    document.addEventListener('touchend', onTouchEnd);
-    document.addEventListener('touchcancel', onTouchEnd);
+    document.addEventListener('touchend', cleanup);
+    document.addEventListener('touchcancel', cleanup);
   }
   resizeGrip.addEventListener('mousedown', e => {
     e.preventDefault();
@@ -759,6 +773,8 @@ function buildGIF(w, h, frames, delayCs) {
   const satS     = document.getElementById('satS');
   const mlGuard  = document.getElementById('mlGuard');
   const mlAmpS   = document.getElementById('mlAmpS');
+  const msgChk   = document.getElementById('msgChk');
+  const msgText  = document.getElementById('msgText');
   const blurChk  = document.getElementById('blurChk');
   const blurS    = document.getElementById('blurS');
   const warpChk    = document.getElementById('warpChk');
@@ -780,6 +796,12 @@ function buildGIF(w, h, frames, delayCs) {
   mlGuard.addEventListener('change', redrawIfStopped);
   mlAmpS.addEventListener('input', () => {
     document.getElementById('mlAmpV').textContent = mlAmpS.value;
+    regenerateOverlay();
+    redrawIfStopped();
+  });
+  msgChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
+  msgText.addEventListener('input', () => {
+    document.getElementById('msgLenV').textContent = msgText.value.length;
     regenerateOverlay();
     redrawIfStopped();
   });
@@ -1178,19 +1200,102 @@ function buildGIF(w, h, frames, delayCs) {
     return [h * 60, s * 100, l * 100];
   }
 
+  // ── Hidden message (experimental) ────────────────────────────────────────
+  // Encodes a short machine-readable declaration into its own fixed 32x32
+  // block grid within the overlay, independent of the 8x8 AI-disruption
+  // block-bias grid above.
+  //
+  // Manchester-coded, not a plain threshold: each bit gets TWO blocks, one
+  // carrying the bit and one carrying its complement (+AMP/-AMP or vice
+  // versa), repeated MSG_REDUNDANCY times. Decoding compares each bit's own
+  // two halves against each other, never against a global threshold.
+  // This matters because a plain "value > 0" or "value > median" threshold
+  // breaks whenever the message is bit-unbalanced (any short message is —
+  // mostly zero-padding): the per-channel DC-removal step below normalizes
+  // the *whole* overlay to zero mean, which shifts a skewed message layer's
+  // 1-cluster and 0-cluster by the same absolute amount but leaves them very
+  // different distances from zero, so a shared threshold misclassifies most
+  // of whichever bit value is in the minority. Differential comparison
+  // within each bit's own pair cancels any shared shift automatically.
+  // Not yet verified to survive actual MP4/WebM/GIF export compression,
+  // only in-app frame averaging (see the 検証カード).
+  const MSG_BYTES = 32, MSG_BITS = MSG_BYTES * 8, MSG_REDUNDANCY = 2;
+  const MSG_SLOTS_PER_REP = MSG_BITS * 2;                    // 512 (bit + complement)
+  const MSG_GRID = Math.sqrt(MSG_SLOTS_PER_REP * MSG_REDUNDANCY); // 32x32 = 1024 blocks
+  const MSG_AMP  = 14;
+
+  function textToBits(text) {
+    const bytes = new TextEncoder().encode(text);
+    const bits = new Uint8Array(MSG_BITS);
+    for (let i = 0; i < MSG_BYTES; i++) {
+      const b = i < bytes.length ? bytes[i] : 0;
+      for (let k = 0; k < 8; k++) bits[i * 8 + k] = (b >> (7 - k)) & 1;
+    }
+    return bits;
+  }
+
+  // Shared block→(bitIndex, half) mapping used by both encode and decode.
+  function msgSlotAt(blockIndex) {
+    const withinRep = blockIndex % MSG_SLOTS_PER_REP;
+    return { bitIndex: withinRep >> 1, half: withinRep & 1 };
+  }
+
+  function decodeMessage(avgData, origPixels, w, h) {
+    const blockW = Math.ceil(w / MSG_GRID), blockH = Math.ceil(h / MSG_GRID);
+    const halfSum = [new Float64Array(MSG_BITS), new Float64Array(MSG_BITS)];
+    const halfCnt = [new Int32Array(MSG_BITS), new Int32Array(MSG_BITS)];
+    for (let by = 0; by < MSG_GRID; by++) {
+      for (let bx = 0; bx < MSG_GRID; bx++) {
+        const { bitIndex, half } = msgSlotAt(by * MSG_GRID + bx);
+        const x0 = bx * blockW, x1 = Math.min(w, x0 + blockW);
+        const y0 = by * blockH, y1 = Math.min(h, y0 + blockH);
+        let diffSum = 0, n = 0;
+        for (let y = y0; y < y1; y++) {
+          for (let x = x0; x < x1; x++) {
+            const p = (y * w + x) * 4;
+            diffSum += (avgData[p] - origPixels[p]) + (avgData[p + 1] - origPixels[p + 1]) + (avgData[p + 2] - origPixels[p + 2]);
+            n += 3;
+          }
+        }
+        halfSum[half][bitIndex] += diffSum / n;
+        halfCnt[half][bitIndex] += 1;
+      }
+    }
+    const bytes = new Uint8Array(MSG_BYTES);
+    for (let i = 0; i < MSG_BYTES; i++) {
+      let b = 0;
+      for (let k = 0; k < 8; k++) {
+        const bitIndex = i * 8 + k;
+        const v0 = halfSum[0][bitIndex] / halfCnt[0][bitIndex];
+        const v1 = halfSum[1][bitIndex] / halfCnt[1][bitIndex];
+        b = (b << 1) | (v0 > v1 ? 1 : 0);
+      }
+      bytes[i] = b;
+    }
+    let end = MSG_BYTES;
+    while (end > 0 && bytes[end - 1] === 0) end--;
+    if (end === 0) return null;
+    // Non-fatal: a handful of bit errors should show up as a stray "�"
+    // character, not blow up the whole message the way `fatal:true` would
+    // (UTF-8 validity breaks on a single flipped high bit).
+    return new TextDecoder('utf-8').decode(bytes.slice(0, end));
+  }
+
   // ── ML-protection overlay ────────────────────────────────────────────────
   // Generates a fixed pattern seeded from the image, added identically to
   // every rendered frame (unlike the per-cell HSL noise, which is zero-mean
   // and cancels out under naive frame averaging).
-  // Two spatial bands, deliberately far apart, so a single narrowband filter
-  // can't strip both at once:
+  // Bands, deliberately far apart in spatial frequency, so a single
+  // narrowband filter can't strip all of them at once:
   //   - High-frequency sinusoids: period 2-5 px → above human CSF cutoff (~30 cpd)
   //   - Low-frequency block bias: coarse 8x8 grid, well below the visible
   //     noise-cell grid resolution
-  // Both layers are zero-mean per channel (no DC shift), and both survive
+  //   - Hidden message: independent 32x32 block grid (see above)
+  // All layers are zero-mean per channel (no DC shift), and all survive
   // temporal frame averaging by construction — they disrupt CNN feature maps
-  // even after an attacker mean-stacks captured frames.
-  function generateOverlay(pixels, w, h, amp) {
+  // (or, for the message, stay readable) even after an attacker mean-stacks
+  // captured frames.
+  function generateOverlay(pixels, w, h, amp, message) {
     const overlay = new Float32Array(w * h * 3);
 
     // Derive a deterministic seed from image content
@@ -1213,6 +1318,13 @@ function buildGIF(w, h, frames, delayCs) {
     const BAMP  = totalAmp * 0.4;  // low-frequency block-bias share
     const BCOLS = 8, BROWS = 8;    // coarse grid, distinct from both the sinusoid
                                     // period and the visible noise-cell grid
+
+    // != null (not truthy): an empty string is a valid "on, but no content"
+    // message and must still embed a well-defined (all-zero) bit pattern —
+    // otherwise decode has nothing to distinguish from the other overlay
+    // layers' unrelated signal and reads back noise instead of "no message".
+    const msgBits  = message != null ? textToBits(message) : null;
+    const msgBlockW = Math.ceil(w / MSG_GRID), msgBlockH = Math.ceil(h / MSG_GRID);
 
     for (let ch = 0; ch < 3; ch++) {
       for (let k = 0; k < N; k++) {
@@ -1246,6 +1358,29 @@ function buildGIF(w, h, frames, delayCs) {
         }
       }
 
+      // Hidden message: same sign/magnitude on every channel (unlike the
+      // random per-channel block bias above) so decode can sum all three
+      // channels for a stronger signal. Manchester-coded (see msgSlotAt):
+      // half 0 carries the bit, half 1 carries its complement, so each bit's
+      // pair sums to zero regardless of the message's own 1/0 balance.
+      if (msgBits) {
+        for (let by = 0; by < MSG_GRID; by++) {
+          for (let bx = 0; bx < MSG_GRID; bx++) {
+            const { bitIndex, half } = msgSlotAt(by * MSG_GRID + bx);
+            const bit = msgBits[bitIndex];
+            const carries1 = half === 0 ? bit : (1 - bit);
+            const bias = (carries1 ? 1 : -1) * MSG_AMP;
+            const x0 = bx * msgBlockW, x1 = Math.min(w, x0 + msgBlockW);
+            const y0 = by * msgBlockH, y1 = Math.min(h, y0 + msgBlockH);
+            for (let y = y0; y < y1; y++) {
+              for (let x = x0; x < x1; x++) {
+                overlay[(y * w + x) * 3 + ch] += bias;
+              }
+            }
+          }
+        }
+      }
+
       // Remove residual DC so spatial mean is exactly zero
       let sum = 0;
       for (let i = ch; i < overlay.length; i += 3) sum += overlay[i];
@@ -1256,10 +1391,12 @@ function buildGIF(w, h, frames, delayCs) {
     return overlay;
   }
 
+  function currentMessage() { return msgChk.checked ? msgText.value : null; }
+
   function regenerateOverlay() {
     if (!origCanvas) return;
     const pixels = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH).data;
-    fixedOverlay = generateOverlay(pixels, imgW, imgH, +mlAmpS.value);
+    fixedOverlay = generateOverlay(pixels, imgW, imgH, +mlAmpS.value, currentMessage());
   }
 
   // ── File loading ───────────────────────────────────────────────────────────
@@ -1321,7 +1458,7 @@ function buildGIF(w, h, frames, delayCs) {
     }
 
     // Fixed adversarial overlay (image-specific, survives frame averaging)
-    fixedOverlay = generateOverlay(pixels, w, h, +mlAmpS.value);
+    fixedOverlay = generateOverlay(pixels, w, h, +mlAmpS.value, currentMessage());
     blurOffscreen = document.createElement('canvas');
     blurOffscreen.width = w; blurOffscreen.height = h;
     blurOCtx = blurOffscreen.getContext('2d');
@@ -1479,6 +1616,15 @@ function buildGIF(w, h, frames, delayCs) {
     else               verdict = '◎ 復元は強く阻害されている';
     document.getElementById('avgVerdict').textContent =
       `${verdict}（ML保護: ${mlGuard.checked ? 'ON strength=' + mlAmpS.value : 'OFF'}）`;
+
+    const msgEl = document.getElementById('avgMsg');
+    if (msgChk.checked) {
+      const decoded = decodeMessage(avgData, origPixels, w, h);
+      msgEl.textContent = decoded ? `"${decoded}"` : '(復元できず — 強度や再生フレーム数を上げてみてください)';
+    } else {
+      msgEl.textContent = '(埋め込みOFF)';
+    }
+
     document.getElementById('avgResult').style.display = 'block';
 
     drawNoise();
