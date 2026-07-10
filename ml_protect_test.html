@@ -84,6 +84,9 @@
 
       /* ML保護チェックボックスのラベルを大きく */
       #mlGuard { width: 18px; height: 18px; }
+
+      /* 指でつまみやすいよう、プレビューのリサイズ用グリップを拡大 */
+      .resize-grip { border-width: 0 0 32px 32px; }
     }
 
     .card {
@@ -204,6 +207,7 @@
       border-color: transparent transparent rgba(255,255,255,0.35) transparent;
       cursor: nwse-resize;
       z-index: 5;
+      touch-action: none;
     }
     .resize-grip:hover { border-bottom-color: rgba(255,255,255,0.65); }
     #mainCanvas {
@@ -701,30 +705,54 @@ function buildGIF(w, h, frames, delayCs) {
   new ResizeObserver(syncPreviewSize).observe(previewPane);
 
   // Custom corner-drag resize: setting style.width/height directly on every
-  // mousemove reflows the flex column synchronously, so the play/pause row,
+  // move reflows the flex column synchronously, so the play/pause row,
   // ML-stats panel and averaging-test card below always slide down to make
   // room in real time — nothing to collide with as the pane grows.
+  // Mouse and touch share the same start/move/end logic; touch additionally
+  // needs `touch-action:none` (set in CSS) and preventDefault on touchstart/
+  // touchmove so the drag doesn't get hijacked as a page-scroll gesture.
   const resizeGrip = document.getElementById('resizeGrip');
-  resizeGrip.addEventListener('mousedown', e => {
-    e.preventDefault();
-    const startX = e.clientX, startY = e.clientY;
+  function beginResize(startX, startY) {
     const rect = previewPane.getBoundingClientRect();
     const startW = rect.width, startH = rect.height;
     const maxW = window.innerWidth * 2.5;
     const maxH = window.innerHeight * 5;
-    function onMove(ev) {
-      const w = Math.min(maxW, Math.max(220, startW + (ev.clientX - startX)));
-      const h = Math.min(maxH, Math.max(160, startH + (ev.clientY - startY)));
+    function apply(clientX, clientY) {
+      const w = Math.min(maxW, Math.max(220, startW + (clientX - startX)));
+      const h = Math.min(maxH, Math.max(160, startH + (clientY - startY)));
       previewPane.style.width  = w + 'px';
       previewPane.style.height = h + 'px';
     }
-    function onUp() {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+    function onMouseMove(ev) { apply(ev.clientX, ev.clientY); }
+    function onMouseUp() {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
     }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    function onTouchMove(ev) {
+      ev.preventDefault();
+      const t = ev.touches[0];
+      apply(t.clientX, t.clientY);
+    }
+    function onTouchEnd() {
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+      document.removeEventListener('touchcancel', onTouchEnd);
+    }
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onTouchEnd);
+    document.addEventListener('touchcancel', onTouchEnd);
+  }
+  resizeGrip.addEventListener('mousedown', e => {
+    e.preventDefault();
+    beginResize(e.clientX, e.clientY);
   });
+  resizeGrip.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    beginResize(t.clientX, t.clientY);
+  }, { passive: false });
 
   const hueS     = document.getElementById('hueS');
   const litS     = document.getElementById('litS');
