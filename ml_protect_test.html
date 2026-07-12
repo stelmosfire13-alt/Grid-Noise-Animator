@@ -1241,10 +1241,44 @@ function buildGIF(w, h, frames, delayCs) {
     return bits;
   }
 
-  // Shared block→(bitIndex, half) mapping used by both encode and decode.
-  function msgSlotAt(blockIndex) {
-    const withinRep = blockIndex % MSG_SLOTS_PER_REP;
-    return { bitIndex: withinRep >> 1, half: withinRep & 1 };
+  // Fixed pseudo-random permutation, applied SEPARATELY within each half of
+  // the grid (rows 0-15 / rows 16-31). Without this, `half` (see msgSlotAt)
+  // works out to exactly `bx % 2` — an even/odd *column* — because blocks
+  // are numbered in simple row-major order and MSG_GRID is even. Any run of
+  // identical bits (guaranteed for any message shorter than 32 bytes: the
+  // padding is all zero) then paints a dead-flat vertical stripe for
+  // however many rows share that padding, since with a constant bit the
+  // sign is determined by column parity alone. Shuffling within each half
+  // scrambles that correlation while keeping the top-half/bottom-half split
+  // intact for the two MSG_REDUNDANCY copies — an earlier version permuted
+  // the full 1024-block grid in one pass, which killed the stripes but let
+  // both redundant copies of a bit land in similarly bad (clipping-prone)
+  // spots by chance on some images, since they were no longer guaranteed to
+  // come from spatially distinct top/bottom halves. Must be identical
+  // between encode and decode.
+  function buildMsgPermutation(n, seed) {
+    function rand() { seed = (Math.imul(seed, 1664525) + 1013904223) | 0; return (seed >>> 0) / 0x100000000; }
+    const arr = Array.from({ length: n }, (_, i) => i);
+    for (let i = n - 1; i > 0; i--) {
+      const j = (rand() * (i + 1)) | 0;
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  // Shared (row, col) → (bitIndex, half) mapping used by both encode and decode.
+  function msgSlotAt(by, bx) {
+    if (!msgSlotAt._perms) {
+      msgSlotAt._perms = [
+        buildMsgPermutation(MSG_SLOTS_PER_REP, 0x9e3779b9),
+        buildMsgPermutation(MSG_SLOTS_PER_REP, 0x517cc1b7),
+      ];
+    }
+    const half0Rows = MSG_GRID / 2; // rows 0..half0Rows-1 = repetition 0, rest = repetition 1
+    const rep = by < half0Rows ? 0 : 1;
+    const localIndex = (by % half0Rows) * MSG_GRID + bx; // 0..MSG_SLOTS_PER_REP-1 within this half
+    const shuffled = msgSlotAt._perms[rep][localIndex];
+    return { bitIndex: shuffled >> 1, half: shuffled & 1 };
   }
 
   function decodeMessage(avgData, origPixels, w, h) {
@@ -1253,7 +1287,7 @@ function buildGIF(w, h, frames, delayCs) {
     const halfCnt = [new Int32Array(MSG_BITS), new Int32Array(MSG_BITS)];
     for (let by = 0; by < MSG_GRID; by++) {
       for (let bx = 0; bx < MSG_GRID; bx++) {
-        const { bitIndex, half } = msgSlotAt(by * MSG_GRID + bx);
+        const { bitIndex, half } = msgSlotAt(by, bx);
         const x0 = bx * blockW, x1 = Math.min(w, x0 + blockW);
         const y0 = by * blockH, y1 = Math.min(h, y0 + blockH);
         let diffSum = 0, n = 0;
@@ -1373,7 +1407,7 @@ function buildGIF(w, h, frames, delayCs) {
       if (msgBits) {
         for (let by = 0; by < MSG_GRID; by++) {
           for (let bx = 0; bx < MSG_GRID; bx++) {
-            const { bitIndex, half } = msgSlotAt(by * MSG_GRID + bx);
+            const { bitIndex, half } = msgSlotAt(by, bx);
             const bit = msgBits[bitIndex];
             const carries1 = half === 0 ? bit : (1 - bit);
             const bias = (carries1 ? 1 : -1) * MSG_AMP;
