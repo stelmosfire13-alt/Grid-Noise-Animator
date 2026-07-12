@@ -81,7 +81,7 @@
       input[type=number] { width: 72px; }
 
       /* ML保護チェックボックスのラベルを大きく */
-      #mlGuard { width: 18px; height: 18px; }
+      #mlGuardHF, #mlGuardGrid { width: 18px; height: 18px; }
 
       /* 指でつまみやすいよう、プレビューのリサイズ用グリップを拡大 */
       .resize-grip { border-width: 0 0 32px 32px; }
@@ -392,13 +392,27 @@
       </div>
       <div class="field" style="margin-top:10px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
-          <input type="checkbox" id="mlGuard" checked style="width:14px;height:14px">
-          <span>ML学習保護（高周波+格子パターン重畳）</span>
+          <input type="checkbox" id="mlGuardHF" checked style="width:14px;height:14px">
+          <span>ML学習保護：高周波成分</span>
         </label>
         <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
-          フレーム平均後も残る固定パターン（高周波成分＋粗い格子バイアス）を埋め込みます。人間には不可視ですがAI特徴抽出を乱します。
+          2〜5px周期のサイン波パターン。人間には不可視ですがAI特徴抽出を乱します。
         </div>
-        <div class="field-label" style="margin-top:8px">保護強度 <em id="mlAmpV">16</em>/255</div>
+      </div>
+      <div class="field" style="margin-top:8px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="mlGuardGrid" checked style="width:14px;height:14px">
+          <span>ML学習保護：格子パターン</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          8×8の粗いブロック単位の固定バイアス。高周波成分とは別の空間周波数帯なので、片方だけ除去されても残ります。
+        </div>
+      </div>
+      <div class="field" style="margin-top:8px">
+        <div style="font-size:11px;color:#888;margin-bottom:4px;line-height:1.4">
+          どちらもフレーム平均後も残る固定パターンです（強度は下のスライダーで共通設定）。
+        </div>
+        <div class="field-label">保護強度 <em id="mlAmpV">16</em>/255</div>
         <input type="range" id="mlAmpS" min="6" max="40" value="16">
       </div>
       <div class="field" style="margin-top:10px">
@@ -778,7 +792,8 @@ function buildGIF(w, h, frames, delayCs) {
   const hueS     = document.getElementById('hueS');
   const litS     = document.getElementById('litS');
   const satS     = document.getElementById('satS');
-  const mlGuard  = document.getElementById('mlGuard');
+  const mlGuardHF   = document.getElementById('mlGuardHF');
+  const mlGuardGrid = document.getElementById('mlGuardGrid');
   const mlAmpS   = document.getElementById('mlAmpS');
   const msgChk   = document.getElementById('msgChk');
   const msgText  = document.getElementById('msgText');
@@ -800,7 +815,8 @@ function buildGIF(w, h, frames, delayCs) {
   document.getElementById('blurChk').addEventListener('change', redrawIfStopped);
   document.getElementById('warpChk').addEventListener('change', redrawIfStopped);
   document.getElementById('noiseSel').addEventListener('change', redrawIfStopped);
-  mlGuard.addEventListener('change', redrawIfStopped);
+  mlGuardHF.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
+  mlGuardGrid.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
   mlAmpS.addEventListener('input', () => {
     document.getElementById('mlAmpV').textContent = mlAmpS.value;
     regenerateOverlay();
@@ -1042,7 +1058,7 @@ function buildGIF(w, h, frames, delayCs) {
           g += edgeBuf[ei3 + 1] * mul; if(g<0)g=0; else if(g>255)g=255;
           b += edgeBuf[ei3 + 2] * mul; if(b<0)b=0; else if(b>255)b=255;
 
-          if (mlGuard.checked && fixedOverlay) {
+          if (fixedOverlay) {
             const oi = i * 3;
             r += fixedOverlay[oi];     if(r<0)r=0; else if(r>255)r=255;
             g += fixedOverlay[oi + 1]; if(g<0)g=0; else if(g>255)g=255;
@@ -1140,7 +1156,7 @@ function buildGIF(w, h, frames, delayCs) {
         g += edgeBuf[ei3 + 1] * mul; if(g<0)g=0; else if(g>255)g=255;
         b += edgeBuf[ei3 + 2] * mul; if(b<0)b=0; else if(b>255)b=255;
 
-        if (mlGuard.checked && fixedOverlay) {
+        if (fixedOverlay) {
           const oi = i * 3;
           r += fixedOverlay[oi];     if(r<0)r=0; else if(r>255)r=255;
           g += fixedOverlay[oi + 1]; if(g<0)g=0; else if(g>255)g=255;
@@ -1336,7 +1352,7 @@ function buildGIF(w, h, frames, delayCs) {
   // temporal frame averaging by construction — they disrupt CNN feature maps
   // (or, for the message, stay readable) even after an attacker mean-stacks
   // captured frames.
-  function generateOverlay(pixels, w, h, amp, message) {
+  function generateOverlay(pixels, w, h, amp, message, includeHF, includeGrid) {
     const overlay = new Float32Array(w * h * 3);
 
     // Derive a deterministic seed from image content
@@ -1368,32 +1384,36 @@ function buildGIF(w, h, frames, delayCs) {
     const msgBlockW = Math.ceil(w / MSG_GRID), msgBlockH = Math.ceil(h / MSG_GRID);
 
     for (let ch = 0; ch < 3; ch++) {
-      for (let k = 0; k < N; k++) {
-        const period = 2 + rand() * 3;          // 2–5 px period (high frequency)
-        const freq   = 1 / period;
-        const angle  = rand() * Math.PI;        // random orientation
-        const phase  = rand() * Math.PI * 2;
-        const cx     = Math.cos(angle);
-        const cy     = Math.sin(angle);
-        const TWO_PI_F = 2 * Math.PI * freq;
+      if (includeHF) {
+        for (let k = 0; k < N; k++) {
+          const period = 2 + rand() * 3;          // 2–5 px period (high frequency)
+          const freq   = 1 / period;
+          const angle  = rand() * Math.PI;        // random orientation
+          const phase  = rand() * Math.PI * 2;
+          const cx     = Math.cos(angle);
+          const cy     = Math.sin(angle);
+          const TWO_PI_F = 2 * Math.PI * freq;
 
-        for (let y = 0; y < h; y++) {
-          for (let x = 0; x < w; x++) {
-            overlay[(y * w + x) * 3 + ch] += a * Math.sin(TWO_PI_F * (x * cx + y * cy) + phase);
+          for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              overlay[(y * w + x) * 3 + ch] += a * Math.sin(TWO_PI_F * (x * cx + y * cy) + phase);
+            }
           }
         }
       }
 
       // Low-frequency block bias: fixed offset per coarse block
-      const blockW = Math.ceil(w / BCOLS), blockH = Math.ceil(h / BROWS);
-      for (let by = 0; by < BROWS; by++) {
-        for (let bx = 0; bx < BCOLS; bx++) {
-          const bias = (rand() * 2 - 1) * BAMP;
-          const x0 = bx * blockW, x1 = Math.min(w, x0 + blockW);
-          const y0 = by * blockH, y1 = Math.min(h, y0 + blockH);
-          for (let y = y0; y < y1; y++) {
-            for (let x = x0; x < x1; x++) {
-              overlay[(y * w + x) * 3 + ch] += bias;
+      if (includeGrid) {
+        const blockW = Math.ceil(w / BCOLS), blockH = Math.ceil(h / BROWS);
+        for (let by = 0; by < BROWS; by++) {
+          for (let bx = 0; bx < BCOLS; bx++) {
+            const bias = (rand() * 2 - 1) * BAMP;
+            const x0 = bx * blockW, x1 = Math.min(w, x0 + blockW);
+            const y0 = by * blockH, y1 = Math.min(h, y0 + blockH);
+            for (let y = y0; y < y1; y++) {
+              for (let x = x0; x < x1; x++) {
+                overlay[(y * w + x) * 3 + ch] += bias;
+              }
             }
           }
         }
@@ -1437,7 +1457,7 @@ function buildGIF(w, h, frames, delayCs) {
   function regenerateOverlay() {
     if (!origCanvas) return;
     const pixels = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH).data;
-    fixedOverlay = generateOverlay(pixels, imgW, imgH, +mlAmpS.value, currentMessage());
+    fixedOverlay = generateOverlay(pixels, imgW, imgH, +mlAmpS.value, currentMessage(), mlGuardHF.checked, mlGuardGrid.checked);
   }
 
   // ── File loading ───────────────────────────────────────────────────────────
@@ -1499,7 +1519,7 @@ function buildGIF(w, h, frames, delayCs) {
     }
 
     // Fixed adversarial overlay (image-specific, survives frame averaging)
-    fixedOverlay = generateOverlay(pixels, w, h, +mlAmpS.value, currentMessage());
+    fixedOverlay = generateOverlay(pixels, w, h, +mlAmpS.value, currentMessage(), mlGuardHF.checked, mlGuardGrid.checked);
     blurOffscreen = document.createElement('canvas');
     blurOffscreen.width = w; blurOffscreen.height = h;
     blurOCtx = blurOffscreen.getContext('2d');
@@ -1575,7 +1595,11 @@ function buildGIF(w, h, frames, delayCs) {
     const nSat    = Math.pow(dS / 100 * 255 * 0.4, 2) / 3;
     const nWarp   = imageGradVar * warpR * warpR / 3;
     const mlAmp   = +mlAmpS.value;
-    const nML     = mlGuard.checked ? mlAmp * mlAmp * 0.5 : 0;
+    // Weighted by each layer's share of the amplitude budget in
+    // generateOverlay (0.6 high-freq / 0.4 grid), so ticking just one gives
+    // a proportionally smaller estimate than both together.
+    const mlActiveFrac = (mlGuardHF.checked ? 0.6 : 0) + (mlGuardGrid.checked ? 0.4 : 0);
+    const nML     = mlAmp * mlAmp * 0.5 * mlActiveFrac;
     const baseNoise = nChroma + nLight + nSat + nWarp + nML;
     // Enhanced mode: irregular boundaries + periodic regeneration bonus
     const morphInterval = +morphS.value;
@@ -1655,8 +1679,11 @@ function buildGIF(w, h, frames, delayCs) {
     else if (mae < 3) verdict = '△ わずかな痕跡のみで復元される';
     else if (mae < 8) verdict = '○ 目視ではやや残るが復元は容易';
     else               verdict = '◎ 復元は強く阻害されている';
+    const mlGuardLabel = (mlGuardHF.checked || mlGuardGrid.checked)
+      ? `高周波${mlGuardHF.checked ? 'ON' : 'OFF'}/格子${mlGuardGrid.checked ? 'ON' : 'OFF'} strength=${mlAmpS.value}`
+      : 'OFF';
     document.getElementById('avgVerdict').textContent =
-      `${verdict}（ML保護: ${mlGuard.checked ? 'ON strength=' + mlAmpS.value : 'OFF'}）`;
+      `${verdict}（ML保護: ${mlGuardLabel}）`;
 
     const msgEl = document.getElementById('avgMsg');
     if (msgChk.checked) {
@@ -1886,7 +1913,7 @@ function buildGIF(w, h, frames, delayCs) {
         g += _cCdG[ci]; if(g<0)g=0; else if(g>255)g=255;
         b += _cCdB[ci]; if(b<0)b=0; else if(b>255)b=255;
 
-        if (mlGuard.checked && fixedOverlay) {
+        if (fixedOverlay) {
           const oi = i * 3;
           r += fixedOverlay[oi];     if(r<0)r=0; else if(r>255)r=255;
           g += fixedOverlay[oi + 1]; if(g<0)g=0; else if(g>255)g=255;
@@ -2007,7 +2034,7 @@ function buildGIF(w, h, frames, delayCs) {
           b += dB; if (b < 0) b = 0; else if (b > 255) b = 255;
 
           // Fixed adversarial overlay (元座標基準で重畳 → 時間平均で残る)
-          if (mlGuard.checked && fixedOverlay) {
+          if (fixedOverlay) {
             const oi = i * 3;
             r += fixedOverlay[oi];     if (r < 0) r = 0; else if (r > 255) r = 255;
             g += fixedOverlay[oi + 1]; if (g < 0) g = 0; else if (g > 255) g = 255;
