@@ -437,6 +437,15 @@
         </div>
         <input type="text" id="msgText" value="NO-AI-TRAINING" maxlength="32" style="width:100%;margin-top:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:6px 8px;font-size:0.82rem;box-sizing:border-box;">
         <div style="font-size:10px;color:#777;margin-top:3px;text-align:right;"><span id="msgLenV">15</span>/32文字</div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;margin-top:8px;">
+          <input type="checkbox" id="ocrChk" style="width:14px;height:14px">
+          <span>実際の文字としても埋め込む（ChatGPT等で読める形式）</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          上の隠しメッセージ機能は専用の復号アルゴリズムでしか読めません（文字の形そのものは画像に存在しないため）。ChatGPT等の汎用AIに読ませたい場合はこちらを使ってください。実際の文字を薄いコントラストで敷き詰めるので、上の方式より人間にも見えやすくなります。既定値は他の保護機能を全部ONにした状態でも読めるよう強めに設定しています。人間に見えにくくしたい場合は弱めてください（ただし他の保護機能をONにしていると文字が紛れて読みにくくなります）。
+        </div>
+        <div class="field-label" style="margin-top:8px">文字の濃さ <em id="ocrAmpV">22</em>/255</div>
+        <input type="range" id="ocrAmpS" min="2" max="60" value="22">
       </div>
     </div>
 
@@ -809,6 +818,8 @@ function buildGIF(w, h, frames, delayCs) {
   const mlAmpS   = document.getElementById('mlAmpS');
   const msgChk   = document.getElementById('msgChk');
   const msgText  = document.getElementById('msgText');
+  const ocrChk   = document.getElementById('ocrChk');
+  const ocrAmpS  = document.getElementById('ocrAmpS');
   const blurChk  = document.getElementById('blurChk');
   const blurS    = document.getElementById('blurS');
   const warpChk    = document.getElementById('warpChk');
@@ -837,6 +848,12 @@ function buildGIF(w, h, frames, delayCs) {
   msgChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
   msgText.addEventListener('input', () => {
     document.getElementById('msgLenV').textContent = msgText.value.length;
+    regenerateOverlay();
+    redrawIfStopped();
+  });
+  ocrChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
+  ocrAmpS.addEventListener('input', () => {
+    document.getElementById('ocrAmpV').textContent = ocrAmpS.value;
     regenerateOverlay();
     redrawIfStopped();
   });
@@ -1358,6 +1375,40 @@ function buildGIF(w, h, frames, delayCs) {
     return new TextDecoder('utf-8').decode(bytes.slice(0, end));
   }
 
+  // ── OCR-readable text (experimental) ─────────────────────────────────────
+  // The Manchester-coded message above is NOT readable by a generic vision
+  // model (ChatGPT, Claude, etc.) — it's abstract bit data with no letter
+  // shapes in it, decodable only by decodeMessage()'s own math. To actually
+  // be readable by a generic AI, the message needs real glyphs in the pixel
+  // data: this renders the text (tiled, to survive cropping) onto an
+  // offscreen canvas and returns a 0..1 ink-coverage mask, which
+  // generateOverlay() then adds as a low-contrast brightness bias — visible
+  // in a SINGLE frame (unlike the other layers, which lean on frame
+  // averaging), because a generic AI just looks at whatever frame(s) it's
+  // given and doesn't run our decode algorithm.
+  function renderTextBiasMask(message, w, h) {
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d');
+    octx.fillStyle = '#000';
+    octx.fillRect(0, 0, w, h);
+    const fontSize = Math.max(10, Math.round(Math.min(w, h) * 0.06));
+    octx.font = `bold ${fontSize}px monospace`;
+    octx.fillStyle = '#fff';
+    octx.textBaseline = 'top';
+    const label = message + '   ';
+    const tw = Math.max(1, octx.measureText(label).width);
+    const lineH = fontSize * 1.7;
+    for (let y = -lineH, row = 0; y < h + lineH; y += lineH, row++) {
+      const rowOffset = (row % 2) * (tw / 2);
+      for (let x = -tw - rowOffset; x < w; x += tw) octx.fillText(label, x, y);
+    }
+    const data = octx.getImageData(0, 0, w, h).data;
+    const mask = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) mask[i] = data[i * 4] / 255; // white text on black → red channel = coverage
+    return mask;
+  }
+
   // ── ML-protection overlay ────────────────────────────────────────────────
   // Generates a fixed pattern seeded from the image, added identically to
   // every rendered frame (unlike the per-cell HSL noise, which is zero-mean
@@ -1368,6 +1419,7 @@ function buildGIF(w, h, frames, delayCs) {
   //   - Low-frequency block bias: coarse 8x8 grid, well below the visible
   //     noise-cell grid resolution
   //   - Hidden message: independent 32x32 block grid (see above)
+  //   - OCR-readable text: real glyphs, low contrast (see above)
   // All layers are zero-mean per channel (no DC shift), and all survive
   // temporal frame averaging by construction — they disrupt CNN feature maps
   // (or, for the message, stay readable) even after an attacker mean-stacks
@@ -1402,6 +1454,11 @@ function buildGIF(w, h, frames, delayCs) {
     // layers' unrelated signal and reads back noise instead of "no message".
     const msgBits  = message != null ? textToBits(message) : null;
     const msgBlockW = Math.ceil(w / MSG_GRID), msgBlockH = Math.ceil(h / MSG_GRID);
+
+    // OCR-readable text mask: independent of msgChk/message — uses the same
+    // text field, but is its own separately-toggled layer.
+    const ocrAmp  = +ocrAmpS.value;
+    const ocrMask = (ocrChk.checked && msgText.value) ? renderTextBiasMask(msgText.value, w, h) : null;
 
     for (let ch = 0; ch < 3; ch++) {
       if (includeHF) {
@@ -1459,6 +1516,14 @@ function buildGIF(w, h, frames, delayCs) {
               }
             }
           }
+        }
+      }
+
+      // OCR-readable text: same sign on every channel (a plain brightness
+      // shift, not a color shift, reads most naturally as faint text).
+      if (ocrMask) {
+        for (let i = 0; i < w * h; i++) {
+          if (ocrMask[i] > 0) overlay[i * 3 + ch] += ocrMask[i] * ocrAmp;
         }
       }
 
