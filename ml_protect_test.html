@@ -303,6 +303,18 @@
           <div class="dz-name" id="dzName"></div>
         </div>
       </div>
+      <div id="orientControls" style="display:none;margin-top:8px;">
+        <div style="font-size:11px;color:#888;margin-bottom:5px;line-height:1.4;">
+          画像の向きを変えます（AIは向きが変わると認識しづらくなる場合があります。人間は見慣れないだけで理解はできます）。
+        </div>
+        <div style="display:flex;gap:5px;">
+          <button class="btn btn-gray" id="rotateLeftBtn" style="flex:1;font-size:0.82rem;">⟲ 90°</button>
+          <button class="btn btn-gray" id="rotateRightBtn" style="flex:1;font-size:0.82rem;">⟳ 90°</button>
+          <button class="btn btn-gray" id="flipHBtn" style="flex:1;font-size:0.82rem;">⇋ 左右</button>
+          <button class="btn btn-gray" id="flipVBtn" style="flex:1;font-size:0.82rem;">⇕ 上下</button>
+        </div>
+        <button class="btn btn-gray btn-full" id="resetOrientBtn" style="margin-top:5px;font-size:0.78rem;" disabled>向きをリセット</button>
+      </div>
     </div><!-- /upload-card -->
 
     <div class="card grid-card">
@@ -1186,6 +1198,14 @@ function buildGIF(w, h, frames, delayCs) {
   let cellBnds   = null;  // [{x,y,cw,ch}] for each of ROWS×COLS cells
   let imgW = 0, imgH = 0;
 
+  // Image orientation (rotate/flip), applied when drawing into origCanvas.
+  // Re-orienting a photo can noticeably degrade recognition for some AI
+  // vision models trained mostly on upright images, while a human viewer
+  // can still recognize a rotated/mirrored photo without much trouble.
+  let loadedImg = null, loadedName = '';
+  let orientRotation = 0;      // 0, 90, 180, 270 (clockwise)
+  let orientFlipH = false, orientFlipV = false;
+
   let animId      = null;
   let playing     = false;
   let exporting   = false;
@@ -1474,21 +1494,63 @@ function buildGIF(w, h, frames, delayCs) {
   function loadFile(file) {
     stopAll();
     setStatus('読み込み中...');
+    orientRotation = 0; orientFlipH = false; orientFlipV = false;
     const reader = new FileReader();
     reader.onload = ev => {
       const url = ev.target.result;
       dzThumb.src = url; dzThumb.style.display = 'block';
       dzName.textContent = file.name; dzName.style.display = 'block';
       const img = new Image();
-      img.onload = () => processImage(img, file.name);
+      img.onload = () => {
+        loadedImg = img; loadedName = file.name;
+        document.getElementById('orientControls').style.display = 'block';
+        updateOrientResetBtn();
+        processImage(img, file.name);
+      };
       img.src = url;
     };
     reader.readAsDataURL(file);
   }
 
+  function updateOrientResetBtn() {
+    document.getElementById('resetOrientBtn').disabled =
+      orientRotation === 0 && !orientFlipH && !orientFlipV;
+  }
+
+  function reprocessWithOrientation() {
+    if (!loadedImg) return;
+    stopAll();
+    regionPoints = []; regionPolygons = []; regionMask = null; // old coords no longer valid
+    updateOrientResetBtn();
+    processImage(loadedImg, loadedName);
+  }
+
+  document.getElementById('rotateLeftBtn').addEventListener('click', () => {
+    orientRotation = (orientRotation + 270) % 360;
+    reprocessWithOrientation();
+  });
+  document.getElementById('rotateRightBtn').addEventListener('click', () => {
+    orientRotation = (orientRotation + 90) % 360;
+    reprocessWithOrientation();
+  });
+  document.getElementById('flipHBtn').addEventListener('click', () => {
+    orientFlipH = !orientFlipH;
+    reprocessWithOrientation();
+  });
+  document.getElementById('flipVBtn').addEventListener('click', () => {
+    orientFlipV = !orientFlipV;
+    reprocessWithOrientation();
+  });
+  document.getElementById('resetOrientBtn').addEventListener('click', () => {
+    orientRotation = 0; orientFlipH = false; orientFlipV = false;
+    reprocessWithOrientation();
+  });
+
   // ── Image processing ──────────────────────────────────────────────────────
   function processImage(img, name) {
-    let w = img.naturalWidth, h = img.naturalHeight;
+    const rotated = orientRotation === 90 || orientRotation === 270;
+    let w = rotated ? img.naturalHeight : img.naturalWidth;
+    let h = rotated ? img.naturalWidth  : img.naturalHeight;
     // Scale down if too wide
     if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
     // Snap to COLS/ROWS multiples so cells align perfectly
@@ -1498,11 +1560,27 @@ function buildGIF(w, h, frames, delayCs) {
 
     canvas.width = w; canvas.height = h;
 
-    // Store scaled original in an offscreen canvas
+    // Store scaled + oriented original in an offscreen canvas. Rotation/flip
+    // happen here, once, so every downstream buffer (hslBuf, fixedOverlay,
+    // cellBnds, ...) is built directly from the already-oriented image and
+    // none of that code needs to know orientation exists.
     origCanvas = document.createElement('canvas');
     origCanvas.width = w; origCanvas.height = h;
     const oc = origCanvas.getContext('2d');
-    oc.drawImage(img, 0, 0, w, h);
+    oc.save();
+    oc.translate(w / 2, h / 2);
+    // Flip before rotate: canvas transforms apply to the drawn image
+    // innermost-call-first, so a scale() called after rotate() would mirror
+    // the source image before it gets rotated — meaning "flip horizontal"
+    // would visibly swap a different axis once a 90/270 rotation is also
+    // active, not the left-right the button currently shows. Scaling first
+    // (outermost) mirrors the already-rotated result instead, so the flip
+    // buttons always act on what's currently on screen.
+    oc.scale(orientFlipH ? -1 : 1, orientFlipV ? -1 : 1);
+    oc.rotate(orientRotation * Math.PI / 180);
+    const dw = rotated ? h : w, dh = rotated ? w : h; // pre-rotation draw size
+    oc.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    oc.restore();
 
     // Convert every pixel to HSL and store in hslBuf
     const pixels = oc.getImageData(0, 0, w, h).data;
@@ -1550,7 +1628,7 @@ function buildGIF(w, h, frames, delayCs) {
     expBtn.disabled  = false;
     document.getElementById('avgTestBtn').disabled = false;
     document.getElementById('avgResult').style.display = 'none';
-    setStatus(`読み込み完了: ${name}  (${img.naturalWidth} × ${img.naturalHeight})`);
+    setStatus(`読み込み完了: ${name}  (${imgW} × ${imgH})`);
     computeImageStats();
     if (detailChk.checked) decompose();
     updateMLResistance();
