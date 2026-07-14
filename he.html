@@ -1964,10 +1964,10 @@ function buildGIF(w, h, frames, delayCs) {
 <script>
   (function () {
     const img = document.getElementById('accessCounter');
-    const pageUrl = encodeURIComponent('https://grid-noise-animator.vercel.app/he.html');
-    img.src = 'https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=' + pageUrl
-            + '&count_bg=%236c8ef5&title_bg=%2316161a&icon=&icon_color=%23dde0f0'
-            + '&title=Visits&edge_flat=true';
+    // hits.seeyoufarm.com's badge API is dead (returns 404 as of 2026-07;
+    // the domain now just hosts an unrelated WordPress site), which is why
+    // this never showed up. hits.dwyl.com is a currently-working equivalent.
+    img.src = 'https://hits.dwyl.com/grid-noise-animator-app/he.html.svg?style=flat-square';
     img.onload  = () => { img.style.opacity = '1'; };
     img.onerror = () => { img.style.display = 'none'; };
   })();

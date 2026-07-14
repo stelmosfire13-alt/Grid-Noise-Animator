@@ -446,6 +446,10 @@
         </div>
         <div class="field-label" style="margin-top:8px">文字の濃さ <em id="ocrAmpV">22</em>/255</div>
         <input type="range" id="ocrAmpS" min="2" max="60" value="22">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;margin-top:6px;">
+          <input type="checkbox" id="ocrDarkChk" style="width:14px;height:14px">
+          <span>文字を暗くする（既定は白抜き文字）</span>
+        </label>
       </div>
     </div>
 
@@ -820,6 +824,7 @@ function buildGIF(w, h, frames, delayCs) {
   const msgText  = document.getElementById('msgText');
   const ocrChk   = document.getElementById('ocrChk');
   const ocrAmpS  = document.getElementById('ocrAmpS');
+  const ocrDarkChk = document.getElementById('ocrDarkChk');
   const blurChk  = document.getElementById('blurChk');
   const blurS    = document.getElementById('blurS');
   const warpChk    = document.getElementById('warpChk');
@@ -857,6 +862,7 @@ function buildGIF(w, h, frames, delayCs) {
     regenerateOverlay();
     redrawIfStopped();
   });
+  ocrDarkChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
 
   (function () {
     const THUMB_HIT = 32; // px: how close to thumb center touch must land
@@ -1457,7 +1463,7 @@ function buildGIF(w, h, frames, delayCs) {
 
     // OCR-readable text mask: independent of msgChk/message — uses the same
     // text field, but is its own separately-toggled layer.
-    const ocrAmp  = +ocrAmpS.value;
+    const ocrAmp  = (ocrDarkChk.checked ? -1 : 1) * +ocrAmpS.value;
     const ocrMask = (ocrChk.checked && msgText.value) ? renderTextBiasMask(msgText.value, w, h) : null;
 
     for (let ch = 0; ch < 3; ch++) {
@@ -2632,10 +2638,10 @@ function buildGIF(w, h, frames, delayCs) {
 <script>
   (function () {
     const img = document.getElementById('accessCounter');
-    const pageUrl = encodeURIComponent('https://grid-noise-animator.vercel.app/index.html');
-    img.src = 'https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=' + pageUrl
-            + '&count_bg=%236c8ef5&title_bg=%2316161a&icon=&icon_color=%23dde0f0'
-            + '&title=%E3%82%A2%E3%82%AF%E3%82%BB%E3%82%B9&edge_flat=true';
+    // hits.seeyoufarm.com's badge API is dead (returns 404 as of 2026-07;
+    // the domain now just hosts an unrelated WordPress site), which is why
+    // this never showed up. hits.dwyl.com is a currently-working equivalent.
+    img.src = 'https://hits.dwyl.com/grid-noise-animator-app/ml_protect_test.html.svg?style=flat-square';
     img.onload  = () => { img.style.opacity = '1'; };
     img.onerror = () => { img.style.display = 'none'; };
   })();
