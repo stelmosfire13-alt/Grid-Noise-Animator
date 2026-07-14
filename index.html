@@ -246,12 +246,15 @@
     <div class="card upload-card">
       <div class="card-title">画像を選択</div>
       <div class="dz" id="dz">
-        <input type="file" id="fileIn" accept="image/*">
+        <input type="file" id="fileIn" accept="image/*,video/*">
         <img id="dzThumb" class="dz-thumb" alt="">
         <div class="dz-inner">
           <div>クリックまたはドラッグ&amp;ドロップ</div>
           <div class="dz-name" id="dzName"></div>
         </div>
+      </div>
+      <div id="videoModeNotice" style="display:none;margin-top:8px;font-size:11px;color:#888;line-height:1.4;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;">
+        <strong style="color:var(--text);">動画モード</strong>（<span id="videoModeInfo"></span>）: プレビューは1コマ目のみ表示されます。「動画を出力」を押すと全フレームにノイズ処理をかけます（時間がかかります）。詳細モード・WebM出力には対応していません。
       </div>
     </div><!-- /upload-card -->
 
@@ -973,6 +976,8 @@ function buildGIF(w, h, frames, delayCs) {
   let origCanvas = null;  // offscreen canvas holding the scaled original
   let cellBnds   = null;  // [{x,y,cw,ch}] for each of ROWS×COLS cells
   let imgW = 0, imgH = 0;
+  let loadedVideo  = null;  // <video> element when a video file was loaded instead of an image
+  let videoDuration = 0;
 
   let animId      = null;
   let playing     = false;
@@ -1070,13 +1075,21 @@ function buildGIF(w, h, frames, delayCs) {
   dz.addEventListener('drop',     e => {
     e.preventDefault(); dz.classList.remove('over');
     const f = e.dataTransfer.files[0];
-    if (f && f.type.startsWith('image/')) loadFile(f);
+    if (f && (f.type.startsWith('image/') || f.type.startsWith('video/'))) loadFile(f);
   });
   fileIn.addEventListener('change', () => { if (fileIn.files[0]) loadFile(fileIn.files[0]); });
 
   function loadFile(file) {
     stopAll();
+    if (file.type.startsWith('video/')) loadVideoFile(file);
+    else loadImageFile(file);
+  }
+
+  function loadImageFile(file) {
     setStatus('読み込み中...');
+    loadedVideo = null;
+    document.getElementById('videoModeNotice').style.display = 'none';
+    setVideoModeRestrictions(false);
     const reader = new FileReader();
     reader.onload = ev => {
       const url = ev.target.result;
@@ -1089,9 +1102,78 @@ function buildGIF(w, h, frames, delayCs) {
     reader.readAsDataURL(file);
   }
 
+  // ── Video loading ────────────────────────────────────────────────────────
+  // Preview only ever shows frame 0 (treated exactly like a still image via
+  // processImage — a <video> element works with drawImage the same as <img>,
+  // see mediaNaturalWidth/mediaNaturalHeight). The other frames only get
+  // visited during export, in prepareVideoFrame().
+  function setVideoModeRestrictions(isVideo) {
+    detailChk.disabled = isVideo;
+    if (isVideo && detailChk.checked) {
+      detailChk.checked = false;
+      document.getElementById('detailField').style.display = 'none';
+    }
+    const webmOpt = document.querySelector('#formatSel option[value="webm"]');
+    webmOpt.disabled = isVideo;
+    if (isVideo && document.getElementById('formatSel').value === 'webm') {
+      document.getElementById('formatSel').value = 'mp4';
+    }
+  }
+
+  function loadVideoFile(file) {
+    setStatus('動画を読み込み中...');
+    dzThumb.style.display = 'none';
+    dzName.textContent = file.name; dzName.style.display = 'block';
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.onerror = () => setStatus('動画の読み込みに失敗しました');
+    video.onloadedmetadata = () => { video.currentTime = 0; };
+    video.onseeked = () => {
+      loadedVideo = video;
+      videoDuration = video.duration || 0;
+      setVideoModeRestrictions(true);
+      document.getElementById('videoModeNotice').style.display = 'block';
+      document.getElementById('videoModeInfo').textContent =
+        `${video.videoWidth}×${video.videoHeight}, ${videoDuration.toFixed(1)}秒`;
+      const durIn = document.getElementById('durIn');
+      const maxDur = Math.max(1, Math.floor(videoDuration));
+      durIn.max = maxDur;
+      if (+durIn.value > maxDur) durIn.value = maxDur;
+      processImage(video, file.name);
+      dzThumb.src = canvas.toDataURL('image/png'); dzThumb.style.display = 'block';
+    };
+    video.src = URL.createObjectURL(file);
+  }
+
   // ── Image processing ──────────────────────────────────────────────────────
+  // A <video> element exposes videoWidth/videoHeight instead of img's
+  // naturalWidth/naturalHeight; everything else here (drawImage, etc.) works
+  // identically on both, so this one lookup is the only thing that needs to
+  // branch on media type.
+  function mediaNaturalWidth(src)  { return src.videoWidth  || src.naturalWidth; }
+  function mediaNaturalHeight(src) { return src.videoHeight || src.naturalHeight; }
+
+  // Shared by processImage (initial load) and prepareVideoFrame (per export
+  // frame) so the two never drift out of sync on how HSL gets computed.
+  function computeHslBuf(pixels, w, h) {
+    const buf = new Float32Array(w * h * 3);
+    for (let i = 0; i < w * h; i++) {
+      const [hv, sv, lv] = rgbToHsl(
+        pixels[i * 4]     / 255,
+        pixels[i * 4 + 1] / 255,
+        pixels[i * 4 + 2] / 255
+      );
+      buf[i * 3]     = hv;
+      buf[i * 3 + 1] = sv;
+      buf[i * 3 + 2] = lv;
+    }
+    return buf;
+  }
+
   function processImage(img, name) {
-    let w = img.naturalWidth, h = img.naturalHeight;
+    let w = mediaNaturalWidth(img), h = mediaNaturalHeight(img);
     // Scale down if too wide
     if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
     // Snap to COLS/ROWS multiples so cells align perfectly
@@ -1109,17 +1191,7 @@ function buildGIF(w, h, frames, delayCs) {
 
     // Convert every pixel to HSL and store in hslBuf
     const pixels = oc.getImageData(0, 0, w, h).data;
-    hslBuf = new Float32Array(w * h * 3);
-    for (let i = 0; i < w * h; i++) {
-      const [hv, sv, lv] = rgbToHsl(
-        pixels[i * 4]     / 255,
-        pixels[i * 4 + 1] / 255,
-        pixels[i * 4 + 2] / 255
-      );
-      hslBuf[i * 3]     = hv;
-      hslBuf[i * 3 + 1] = sv;
-      hslBuf[i * 3 + 2] = lv;
-    }
+    hslBuf = computeHslBuf(pixels, w, h);
 
     // Fixed adversarial overlay (image-specific, survives frame averaging)
     fixedOverlay = generateOverlay(pixels, w, h);
@@ -1150,13 +1222,46 @@ function buildGIF(w, h, frames, delayCs) {
     drawOriginal();
     playBtn.disabled = false;
     expBtn.disabled  = false;
-    setStatus(`読み込み完了: ${name}  (${img.naturalWidth} × ${img.naturalHeight})`);
+    setStatus(`読み込み完了: ${name}  (${imgW} × ${imgH})`);
     computeImageStats();
     if (detailChk.checked) decompose();
     updateMLResistance();
     if (origCanvas) origImageData = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH);
     document.getElementById('regionControls').style.display = 'flex';
     syncOverlaySize();
+  }
+
+  // ── Video export: per-frame source refresh ─────────────────────────────
+  // Waits for the browser to actually decode/present the frame at timeSec
+  // before resolving — a bare `currentTime =` assignment is async and the
+  // frame isn't ready until 'seeked' fires.
+  function seekVideoFrame(video, timeSec) {
+    return new Promise(resolve => {
+      const clamped = Math.min(Math.max(0, timeSec), Math.max(0, video.duration - 0.001));
+      function onSeeked() {
+        video.removeEventListener('seeked', onSeeked);
+        resolve();
+      }
+      video.addEventListener('seeked', onSeeked);
+      video.currentTime = clamped;
+    });
+  }
+
+  // Refreshes hslBuf/origImageData from the video frame at timeSec, reusing
+  // imgW/imgH as already established by the initial processImage() call —
+  // only the pixel *content* changes frame to frame, not the dimensions.
+  // fixedOverlay is deliberately NOT regenerated here: it stays the one
+  // pattern computed from frame 0 for the whole export (recomputing per
+  // frame would be correct too, but multiplies an already-expensive
+  // nested-loop computation by the frame count).
+  async function prepareVideoFrame(timeSec) {
+    await seekVideoFrame(loadedVideo, timeSec);
+    const w = imgW, h = imgH;
+    const oc = origCanvas.getContext('2d');
+    oc.drawImage(loadedVideo, 0, 0, w, h);
+    const pixels = oc.getImageData(0, 0, w, h).data;
+    hslBuf = computeHslBuf(pixels, w, h);
+    origImageData = new ImageData(pixels, w, h);
   }
 
   function computeImageStats() {
@@ -1838,7 +1943,8 @@ function buildGIF(w, h, frames, delayCs) {
     if (cycleN >= 2) regenerateBaseAngles();
 
     const fps   = Math.max(1, parseInt(document.getElementById('fpsIn').value)  || 60);
-    const dur   = Math.max(1, Math.min(120, parseInt(document.getElementById('durIn').value) || 5));
+    const durCap = loadedVideo ? Math.min(120, Math.max(1, Math.floor(videoDuration))) : 120;
+    const dur   = Math.max(1, Math.min(durCap, parseInt(document.getElementById('durIn').value) || 5));
     const total = fps * dur;
     const fmt   = document.getElementById('formatSel').value;
 
@@ -1863,6 +1969,7 @@ function buildGIF(w, h, frames, delayCs) {
         for (let f = 0; f < gifTotal; f++) {
           if (!exporting) return;
           if (cycleN >= 2) cycleFrame = f % cycleN;
+          if (loadedVideo) await prepareVideoFrame(f / gifFps);
           drawNoise();
           applyRegionMask();
           // ぼかし有効時はキャンバスから読み直す（ぼかし後のピクセルを使う）
@@ -1929,6 +2036,7 @@ function buildGIF(w, h, frames, delayCs) {
         for (let f = 0; f < total; f++) {
           if (!exporting) { encoder.close(); return; }
           if (cycleN >= 2) cycleFrame = f % cycleN;
+          if (loadedVideo) await prepareVideoFrame(f / fps);
           drawNoise();
           if (document.getElementById('advChk').checked && advModelReady) {
             const eps  = +document.getElementById('advEpsS').value / 255;

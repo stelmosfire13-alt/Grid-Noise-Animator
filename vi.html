@@ -240,12 +240,15 @@
     <div class="card upload-card">
       <div class="card-title">Chọn ảnh</div>
       <div class="dz" id="dz">
-        <input type="file" id="fileIn" accept="image/*">
+        <input type="file" id="fileIn" accept="image/*,video/*">
         <img id="dzThumb" class="dz-thumb" alt="">
         <div class="dz-inner">
           <div>Nhấp hoặc kéo &amp; thả</div>
           <div class="dz-name" id="dzName"></div>
         </div>
+      </div>
+      <div id="videoModeNotice" style="display:none;margin-top:8px;font-size:11px;color:#888;line-height:1.4;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;">
+        <strong style="color:var(--text);">Chế độ video</strong> (<span id="videoModeInfo"></span>): Bản xem trước chỉ hiển thị khung hình đầu tiên. Nhấn "Xuất" để áp dụng hiệu ứng nhiễu cho tất cả khung hình (việc này có thể mất một chút thời gian). Chế độ chi tiết và xuất WebM không được hỗ trợ.
       </div>
     </div><!-- /upload-card -->
 
@@ -967,6 +970,8 @@ function buildGIF(w, h, frames, delayCs) {
   let origCanvas = null;
   let cellBnds   = null;
   let imgW = 0, imgH = 0;
+  let loadedVideo  = null;
+  let videoDuration = 0;
 
   let animId      = null;
   let playing     = false;
@@ -1057,13 +1062,21 @@ function buildGIF(w, h, frames, delayCs) {
   dz.addEventListener('drop',     e => {
     e.preventDefault(); dz.classList.remove('over');
     const f = e.dataTransfer.files[0];
-    if (f && f.type.startsWith('image/')) loadFile(f);
+    if (f && (f.type.startsWith('image/') || f.type.startsWith('video/'))) loadFile(f);
   });
   fileIn.addEventListener('change', () => { if (fileIn.files[0]) loadFile(fileIn.files[0]); });
 
   function loadFile(file) {
     stopAll();
+    if (file.type.startsWith('video/')) loadVideoFile(file);
+    else loadImageFile(file);
+  }
+
+  function loadImageFile(file) {
     setStatus('Đang tải...');
+    loadedVideo = null;
+    document.getElementById('videoModeNotice').style.display = 'none';
+    setVideoModeRestrictions(false);
     const reader = new FileReader();
     reader.onload = ev => {
       const url = ev.target.result;
@@ -1076,9 +1089,68 @@ function buildGIF(w, h, frames, delayCs) {
     reader.readAsDataURL(file);
   }
 
+  // ── Video loading ────────────────────────────────────────────────────────
+  function setVideoModeRestrictions(isVideo) {
+    detailChk.disabled = isVideo;
+    if (isVideo && detailChk.checked) {
+      detailChk.checked = false;
+      document.getElementById('detailField').style.display = 'none';
+    }
+    const webmOpt = document.querySelector('#formatSel option[value="webm"]');
+    webmOpt.disabled = isVideo;
+    if (isVideo && document.getElementById('formatSel').value === 'webm') {
+      document.getElementById('formatSel').value = 'mp4';
+    }
+  }
+
+  function loadVideoFile(file) {
+    setStatus('Đang tải video...');
+    dzThumb.style.display = 'none';
+    dzName.textContent = file.name; dzName.style.display = 'block';
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.onerror = () => setStatus('Tải video không thành công');
+    video.onloadedmetadata = () => { video.currentTime = 0; };
+    video.onseeked = () => {
+      loadedVideo = video;
+      videoDuration = video.duration || 0;
+      setVideoModeRestrictions(true);
+      document.getElementById('videoModeNotice').style.display = 'block';
+      document.getElementById('videoModeInfo').textContent =
+        `${video.videoWidth}×${video.videoHeight}, ${videoDuration.toFixed(1)}giây`;
+      const durIn = document.getElementById('durIn');
+      const maxDur = Math.max(1, Math.floor(videoDuration));
+      durIn.max = maxDur;
+      if (+durIn.value > maxDur) durIn.value = maxDur;
+      processImage(video, file.name);
+      dzThumb.src = canvas.toDataURL('image/png'); dzThumb.style.display = 'block';
+    };
+    video.src = URL.createObjectURL(file);
+  }
+
   // ── Image processing ──────────────────────────────────────────────────────
+  function mediaNaturalWidth(src)  { return src.videoWidth  || src.naturalWidth; }
+  function mediaNaturalHeight(src) { return src.videoHeight || src.naturalHeight; }
+
+  function computeHslBuf(pixels, w, h) {
+    const buf = new Float32Array(w * h * 3);
+    for (let i = 0; i < w * h; i++) {
+      const [hv, sv, lv] = rgbToHsl(
+        pixels[i * 4]     / 255,
+        pixels[i * 4 + 1] / 255,
+        pixels[i * 4 + 2] / 255
+      );
+      buf[i * 3]     = hv;
+      buf[i * 3 + 1] = sv;
+      buf[i * 3 + 2] = lv;
+    }
+    return buf;
+  }
+
   function processImage(img, name) {
-    let w = img.naturalWidth, h = img.naturalHeight;
+    let w = mediaNaturalWidth(img), h = mediaNaturalHeight(img);
     if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
     w = Math.max(COLS, Math.round(w / COLS) * COLS);
     h = Math.max(ROWS, Math.round(h / ROWS) * ROWS);
@@ -1092,17 +1164,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc.drawImage(img, 0, 0, w, h);
 
     const pixels = oc.getImageData(0, 0, w, h).data;
-    hslBuf = new Float32Array(w * h * 3);
-    for (let i = 0; i < w * h; i++) {
-      const [hv, sv, lv] = rgbToHsl(
-        pixels[i * 4]     / 255,
-        pixels[i * 4 + 1] / 255,
-        pixels[i * 4 + 2] / 255
-      );
-      hslBuf[i * 3]     = hv;
-      hslBuf[i * 3 + 1] = sv;
-      hslBuf[i * 3 + 2] = lv;
-    }
+    hslBuf = computeHslBuf(pixels, w, h);
 
     fixedOverlay = generateOverlay(pixels, w, h);
     blurOffscreen = document.createElement('canvas');
@@ -1130,13 +1192,36 @@ function buildGIF(w, h, frames, delayCs) {
     drawOriginal();
     playBtn.disabled = false;
     expBtn.disabled  = false;
-    setStatus(`Đã tải: ${name}  (${img.naturalWidth} × ${img.naturalHeight})`);
+    setStatus(`Đã tải: ${name}  (${imgW} × ${imgH})`);
     computeImageStats();
     if (detailChk.checked) decompose();
     updateMLResistance();
     if (origCanvas) origImageData = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH);
     document.getElementById('regionControls').style.display = 'flex';
     syncOverlaySize();
+  }
+
+  // ── Video export: per-frame source refresh ─────────────────────────────
+  function seekVideoFrame(video, timeSec) {
+    return new Promise(resolve => {
+      const clamped = Math.min(Math.max(0, timeSec), Math.max(0, video.duration - 0.001));
+      function onSeeked() {
+        video.removeEventListener('seeked', onSeeked);
+        resolve();
+      }
+      video.addEventListener('seeked', onSeeked);
+      video.currentTime = clamped;
+    });
+  }
+
+  async function prepareVideoFrame(timeSec) {
+    await seekVideoFrame(loadedVideo, timeSec);
+    const w = imgW, h = imgH;
+    const oc = origCanvas.getContext('2d');
+    oc.drawImage(loadedVideo, 0, 0, w, h);
+    const pixels = oc.getImageData(0, 0, w, h).data;
+    hslBuf = computeHslBuf(pixels, w, h);
+    origImageData = new ImageData(pixels, w, h);
   }
 
   function computeImageStats() {
@@ -1815,7 +1900,8 @@ function buildGIF(w, h, frames, delayCs) {
     if (cycleN >= 2) regenerateBaseAngles();
 
     const fps   = Math.max(1, parseInt(document.getElementById('fpsIn').value)  || 60);
-    const dur   = Math.max(1, Math.min(120, parseInt(document.getElementById('durIn').value) || 5));
+    const durCap = loadedVideo ? Math.min(120, Math.max(1, Math.floor(videoDuration))) : 120;
+    const dur   = Math.max(1, Math.min(durCap, parseInt(document.getElementById('durIn').value) || 5));
     const total = fps * dur;
     const fmt   = document.getElementById('formatSel').value;
 
@@ -1839,6 +1925,7 @@ function buildGIF(w, h, frames, delayCs) {
         for (let f = 0; f < gifTotal; f++) {
           if (!exporting) return;
           if (cycleN >= 2) cycleFrame = f % cycleN;
+          if (loadedVideo) await prepareVideoFrame(f / gifFps);
           drawNoise();
           applyRegionMask();
           const src = (regionMask || (blurChk.checked && blurOffscreen))
@@ -1903,6 +1990,7 @@ function buildGIF(w, h, frames, delayCs) {
         for (let f = 0; f < total; f++) {
           if (!exporting) { encoder.close(); return; }
           if (cycleN >= 2) cycleFrame = f % cycleN;
+          if (loadedVideo) await prepareVideoFrame(f / fps);
           drawNoise();
           if (document.getElementById('advChk').checked && advModelReady) {
             const eps  = +document.getElementById('advEpsS').value / 255;
