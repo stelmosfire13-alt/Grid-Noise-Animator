@@ -1,0 +1,2878 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Grid Noise Animator</title>
+  <style>
+    :root {
+      --bg:      #0d0d0f;
+      --surface: #16161a;
+      --border:  #252530;
+      --accent:  #6c8ef5;
+      --text:    #dde0f0;
+      --muted:   #66668a;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 22px 24px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    header { margin-bottom: 18px; }
+    header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em; }
+    header p  { color: var(--muted); font-size: 0.82rem; margin-top: 3px; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 264px 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+    /* デスクトップ: 左列に各カードを積み、preview は右列全体 */
+    .upload-card,
+    .grid-card,
+    .fx-card,
+    .ctrl-card,
+    .out-card    { grid-column: 1; }
+    /* min-width:0 stops preview-pane's manual resize from forcing the grid
+       track (and the whole page) wider. (preview-pane itself opts out of
+       the column's default cross-axis stretch via align-self, below, so
+       its manual resize isn't overridden on every reflow — see there.) */
+    .preview-col  { grid-column: 2; grid-row: 1 / 99; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+    @media (max-width: 680px) {
+      body { padding: 10px 12px; }
+
+      .layout { grid-template-columns: 1fr; }
+
+      /* 全カードの grid 配置をリセットして order で並べ直す */
+      .upload-card,
+      .grid-card,
+      .fx-card,
+      .ctrl-card,
+      .out-card,
+      .preview-col { grid-column: auto; grid-row: auto; }
+
+      /* モバイル順: 画像選択 → プレビュー → 再生制御 → グリッド → エフェクト → 出力 */
+      .upload-card  { order: 1; }
+      .preview-col  { order: 2; }
+      .preview-pane { min-height: 200px; }
+      .ctrl-card    { order: 3; }
+      .grid-card    { order: 4; }
+      .fx-card      { order: 5; }
+      .out-card     { order: 6; }
+
+      /* タッチターゲットを広げる */
+      .btn { padding: 11px 14px; font-size: 0.88rem; min-height: 44px; }
+      input[type=range] { height: 28px; touch-action: none; }
+      input[type=number],
+      select { font-size: 1rem; padding: 6px 8px; }
+
+      /* num-row が狭い画面でも折り返せるように */
+      .num-row { flex-wrap: wrap; }
+      .num-row label { min-width: 80px; }
+      input[type=number] { width: 72px; }
+
+      /* ML保護チェックボックスのラベルを大きく */
+      #mlGuardHF, #mlGuardGrid { width: 18px; height: 18px; }
+
+      /* 指でつまみやすいよう、プレビューのリサイズ用グリップを拡大 */
+      .resize-grip { border-width: 0 0 32px 32px; }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .card-title {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    /* ── Drop zone ── */
+    .dz {
+      border: 1.5px dashed var(--border);
+      border-radius: 7px;
+      cursor: pointer;
+      overflow: hidden;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .dz:hover { border-color: var(--accent); }
+    .dz.over  { border-color: var(--accent); background: rgba(108,142,245,0.06); }
+    .dz input { display: none; }
+    .dz-thumb {
+      width: 100%; height: clamp(48px, 12vw, 80px);
+      object-fit: cover;
+      display: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .dz-inner { padding: 14px; text-align: center; color: var(--muted); font-size: 0.8rem; }
+    .dz-name  {
+      font-size: 0.75rem; color: var(--text);
+      margin-top: 4px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      display: none;
+    }
+
+    /* ── Sliders ── */
+    .field { margin-bottom: 9px; }
+    .field:last-child { margin-bottom: 0; }
+    .field-label {
+      display: flex; justify-content: space-between;
+      color: var(--muted); font-size: 0.78rem;
+      margin-bottom: 4px;
+    }
+    .field-label em { font-style: normal; color: var(--text); }
+    input[type=range] { width: 67%; accent-color: var(--accent); cursor: pointer; display: block; }
+
+    /* ── Number inputs ── */
+    .num-row { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+    .num-row span { color: var(--muted); font-size: 0.78rem; }
+    .num-row label { min-width: 64px; color: var(--muted); font-size: 0.78rem; }
+    input[type=number] {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 5px;
+      padding: 4px 7px;
+      width: 64px;
+      font-size: 0.82rem;
+    }
+    input[type=number]:focus { outline: none; border-color: var(--accent); }
+
+    /* ── Buttons ── */
+    .btn {
+      border: none; border-radius: 6px;
+      padding: 7px 13px;
+      cursor: pointer; font-size: 0.82rem; font-weight: 600;
+      transition: filter 0.12s, opacity 0.12s;
+    }
+    .btn:hover:not(:disabled) { filter: brightness(1.18); }
+    .btn:disabled { opacity: 0.3; cursor: default; }
+    .btn-blue { background: var(--accent); color: #fff; }
+    .btn-gray { background: var(--border); color: var(--text); }
+    .btn-full { width: 100%; margin-top: 2px; }
+    .btn-row  { display: flex; gap: 7px; }
+
+    /* ── Progress ── */
+    .progress { height: 3px; background: var(--border); border-radius: 2px; margin-top: 7px; display: none; }
+    .progress-fill { height: 100%; background: var(--accent); border-radius: 2px; width: 0%; transition: width 0.07s linear; }
+    .status { color: var(--muted); font-size: 0.76rem; margin-top: 6px; min-height: 1.4em; }
+
+    /* ── Preview pane ──
+       flex:none + align-self:flex-start take it out of the column's
+       flex-grow/stretch sizing entirely: with flex:1 (or default stretch),
+       every reflow re-runs the flex algorithm and silently snaps the box
+       back to its flex-computed size, undoing a manual resize on whichever
+       axis that algorithm controls. Explicit width/height give it a sensible
+       starting size; the custom .resize-grip drag (JS) takes it from there.
+       (Native CSS `resize:both` was dropped: its drag doesn't reliably
+       reflow the sibling controls below in the same column in real time,
+       so growing the box visually collided with them until mouseup.) */
+    .preview-pane {
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: auto;
+      display: flex; align-items: center; justify-content: center;
+      width: min(100%, 62vw);
+      height: clamp(200px, 55vw, 640px);
+      min-width: 220px;
+      min-height: 160px;
+      max-width: 98vw;
+      position: relative;
+      flex: none;
+      align-self: flex-start;
+    }
+    .resize-grip {
+      position: absolute; right: 0; bottom: 0;
+      width: 0; height: 0;
+      border-style: solid;
+      border-width: 0 0 18px 18px;
+      border-color: transparent transparent rgba(255,255,255,0.35) transparent;
+      cursor: nwse-resize;
+      z-index: 5;
+      touch-action: none;
+    }
+    .resize-grip:hover { border-bottom-color: rgba(255,255,255,0.65); }
+    #mainCanvas {
+      display: none;
+      /* Sized in JS (syncCanvasSize) as explicit px, not CSS %/object-fit:
+         a flex item with an intrinsic aspect ratio + percentage height can
+         resolve against an indefinite/auto height in some browsers and
+         overflow its container — explicit px sidesteps that entirely. */
+      image-rendering: pixelated;
+    }
+    .preview-empty { color: var(--muted); font-size: 0.85rem; }
+
+    /* ── Averaging-test thumbnails: kept in sync with preview-pane size ── */
+    .avg-thumb-box {
+      width: var(--preview-w, 100%);
+      height: var(--preview-h, 260px);
+      max-width: 100%;
+      background: #000;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .avg-thumb-box canvas {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      image-rendering: pixelated;
+      display: block;
+    }
+
+    .badge {
+      position: absolute; top: 10px; right: 10px;
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
+      padding: 3px 9px; border-radius: 4px;
+      display: none;
+    }
+    .badge.playing   { background: rgba(0,0,0,0.65); color: #aac; backdrop-filter: blur(4px); }
+    .badge.recording { background: rgba(200,40,40,0.85); color: #fff; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .badge.recording { animation: blink 1s ease-in-out infinite; }
+
+    select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 5px;
+      padding: 4px 7px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      flex: 1;
+    }
+    select:focus { outline: none; border-color: var(--accent); }
+    #regionOverlay {
+      position: absolute; top: 0; left: 0;
+      pointer-events: none;
+      width: 100%; height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <header style="display:flex;align-items:flex-start;justify-content:space-between">
+    <div>
+      <h1>Grid Noise Animator</h1>
+      <p>画像をチカチカさせるツールです。</p>
+    </div>
+    <select onchange="location.href=this.value" style="font-size:0.78rem;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:4px 8px;margin-top:2px;cursor:pointer;outline:none">
+      <option value="index.html" selected>日本語</option>
+      <option value="en.html">English</option>
+      <option value="ko.html">한국어</option>
+      <option value="zh-hans.html">中文(简)</option>
+      <option value="zh-hant.html">中文(繁)</option>
+      <option value="fr.html">Français</option>
+      <option value="es.html">Español</option>
+      <option value="de.html">Deutsch</option>
+      <option value="ru.html">Русский</option>
+      <option value="ar.html">العربية</option>
+      <option value="id.html">Indonesia</option>
+      <option value="it.html">Italiano</option>
+      <option value="pt.html">Português</option>
+      <option value="el.html">Ελληνικά</option>
+      <option value="he.html">עברית</option>
+      <option value="hi.html">हिन्दी</option>
+      <option value="th.html">ไทย</option>
+      <option value="vi.html">Tiếng Việt</option>
+    </select>
+  </header>
+
+  <div class="layout">
+    <div class="card upload-card">
+      <div class="card-title">画像を選択</div>
+      <div class="dz" id="dz">
+        <input type="file" id="fileIn" accept="image/*,video/*">
+        <img id="dzThumb" class="dz-thumb" alt="">
+        <div class="dz-inner">
+          <div>クリックまたはドラッグ&amp;ドロップ</div>
+          <div class="dz-name" id="dzName"></div>
+        </div>
+      </div>
+      <div id="orientControls" style="display:none;margin-top:8px;">
+        <div style="font-size:11px;color:#888;margin-bottom:5px;line-height:1.4;">
+          画像の向きを変えます（AIは向きが変わると認識しづらくなる場合があります。人間は見慣れないだけで理解はできます）。
+        </div>
+        <div style="display:flex;gap:5px;">
+          <button class="btn btn-gray" id="rotateLeftBtn" style="flex:1;font-size:0.82rem;">⟲ 90°</button>
+          <button class="btn btn-gray" id="rotateRightBtn" style="flex:1;font-size:0.82rem;">⟳ 90°</button>
+          <button class="btn btn-gray" id="flipHBtn" style="flex:1;font-size:0.82rem;">⇋ 左右</button>
+          <button class="btn btn-gray" id="flipVBtn" style="flex:1;font-size:0.82rem;">⇕ 上下</button>
+        </div>
+        <button class="btn btn-gray btn-full" id="resetOrientBtn" style="margin-top:5px;font-size:0.78rem;" disabled>向きをリセット</button>
+      </div>
+      <div id="videoModeNotice" style="display:none;margin-top:8px;font-size:11px;color:#888;line-height:1.4;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;">
+        <strong style="color:var(--text);">動画モード</strong>（<span id="videoModeInfo"></span>）: プレビューは1コマ目のみ表示されます。「動画を出力」を押すと全フレームにノイズ処理をかけます（時間がかかります）。詳細モード・WebM出力には対応していません。
+      </div>
+    </div><!-- /upload-card -->
+
+    <div class="card grid-card">
+      <div class="card-title">グリッド設定</div>
+      <div class="num-row">
+        <label>分割数</label>
+        <select id="gridSel">
+          <option value="16">16 × 16</option>
+          <option value="32" selected>32 × 32</option>
+          <option value="64">64 × 64</option>
+          <option value="128">128 × 128</option>
+        </select>
+      </div>
+      <div class="field" style="margin-top:8px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="voronoiChk" style="width:14px;height:14px">
+          <span>拡張モード</span>
+        </label>
+      </div>
+      <div id="morphField" style="display:none;margin-top:8px">
+        <div class="field-label">変化間隔 <em id="morphV">10 f</em></div>
+        <input type="range" id="morphS" min="1" max="120" value="10">
+      </div>
+      <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="detailChk" style="width:14px;height:14px">
+            <span>詳細モード</span>
+          </label>
+        </div>
+        <div id="detailField" style="display:none;margin-top:8px">
+          <div class="field">
+            <div class="field-label">深度 <em id="sepV">25px</em></div>
+            <input type="range" id="sepS" min="1" max="30" value="25">
+          </div>
+          <div class="field">
+            <div class="field-label">エッジ強度 <em id="edgeBrightV">10%</em></div>
+            <input type="range" id="edgeBrightS" min="0" max="100" value="10">
+          </div>
+          <button class="btn btn-gray btn-full" id="reprocessBtn" disabled style="margin-top:6px">再処理</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card fx-card">
+      <div class="card-title">エフェクト設定</div>
+      <div class="field" style="margin-bottom:10px">
+        <div class="field-label">ノイズタイプ</div>
+        <select id="noiseSel" style="font-size:0.82rem;padding:4px 7px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px">
+          <option value="white">ホワイトノイズ（ML耐性重視）</option>
+          <option value="blue">ブルーノイズ（見た目重視）</option>
+        </select>
+      </div>
+      <div class="field">
+        <div class="field-label">色相の変動幅 <em id="hueV">± 15°</em></div>
+        <input type="range" id="hueS" min="0" max="90" value="15">
+      </div>
+      <div class="field">
+        <div class="field-label">明度の変動幅 <em id="litV">± 5%</em></div>
+        <input type="range" id="litS" min="0" max="25" value="5">
+      </div>
+      <div class="field">
+        <div class="field-label">彩度の変動幅 <em id="satV">± 5%</em></div>
+        <input type="range" id="satS" min="0" max="25" value="5">
+      </div>
+      <div class="field">
+        <div class="field-label">同期サイクル <em id="cycleNV">×1 (off)</em></div>
+        <input type="range" id="cycleNS" min="1" max="12" value="1">
+      </div>
+      <div class="field" style="margin-top:4px">
+        <div class="field-label">
+          <span>ぼかし <em id="blurV">1px</em></span>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;color:var(--muted)">
+            <input type="checkbox" id="blurChk" checked style="width:13px;height:13px">ON
+          </label>
+        </div>
+        <input type="range" id="blurS" min="1" max="10" value="1">
+      </div>
+      <div class="field">
+        <div class="field-label">
+          <span>歪み <em id="warpV">2px</em></span>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;color:var(--muted)">
+            <input type="checkbox" id="warpChk" checked style="width:13px;height:13px">ON
+          </label>
+        </div>
+        <input type="range" id="warpS" min="1" max="20" value="2">
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="mlGuardHF" checked style="width:14px;height:14px">
+          <span>ML学習保護：高周波成分</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          2〜5px周期のサイン波パターン。人間には不可視ですがAI特徴抽出を乱します。
+        </div>
+      </div>
+      <div class="field" style="margin-top:8px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="mlGuardGrid" style="width:14px;height:14px">
+          <span>ML学習保護：格子パターン</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          8×8の粗いブロック単位の固定バイアス。高周波成分とは別の空間周波数帯なので、片方だけ除去されても残ります。
+        </div>
+      </div>
+      <div class="field" style="margin-top:8px">
+        <div style="font-size:11px;color:#888;margin-bottom:4px;line-height:1.4">
+          どちらもフレーム平均後も残る固定パターンです（強度は下のスライダーで共通設定）。
+        </div>
+        <div class="field-label">保護強度 <em id="mlAmpV">16</em>/255</div>
+        <input type="range" id="mlAmpS" min="6" max="40" value="16">
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="msgChk" style="width:14px;height:14px">
+          <span>隠しメッセージを埋め込む</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          人間には見えない機械可読の宣言文を埋め込みます（実験的機能・テスト版限定）。フレーム平均で復元できるかは下の検証カードで確認できます。動画書き出し後の圧縮への耐性は未検証です。
+        </div>
+        <input type="text" id="msgText" value="NO-AI-TRAINING" maxlength="32" style="width:100%;margin-top:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:6px 8px;font-size:0.82rem;box-sizing:border-box;">
+        <div style="font-size:10px;color:#777;margin-top:3px;text-align:right;"><span id="msgLenV">15</span>/32文字</div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;margin-top:8px;">
+          <input type="checkbox" id="ocrChk" style="width:14px;height:14px">
+          <span>実際の文字としても埋め込む（ChatGPT等で読める形式）</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          上の隠しメッセージ機能は専用の復号アルゴリズムでしか読めません（文字の形そのものは画像に存在しないため）。ChatGPT等の汎用AIに読ませたい場合はこちらを使ってください。実際の文字を薄いコントラストで敷き詰めるので、上の方式より人間にも見えやすくなります。既定値は他の保護機能を全部ONにした状態でも読めるよう強めに設定しています。人間に見えにくくしたい場合は弱めてください（ただし他の保護機能をONにしていると文字が紛れて読みにくくなります）。
+        </div>
+        <div class="field-label" style="margin-top:8px">文字の濃さ <em id="ocrAmpV">22</em>/255</div>
+        <input type="range" id="ocrAmpS" min="2" max="60" value="22">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;margin-top:6px;">
+          <input type="checkbox" id="ocrDarkChk" style="width:14px;height:14px">
+          <span>文字を暗くする（既定は白抜き文字）</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card ctrl-card">
+      <div class="card-title">プレビュー制御</div>
+      <div class="field" style="margin-bottom:10px">
+        <div class="field-label">FPS <em id="fpsV">60 fps</em></div>
+        <input type="range" id="previewFps" min="1" max="180" value="60">
+      </div>
+      <div class="field" style="margin-top:6px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="watermarkChk" checked style="width:14px;height:14px">
+          <span>透かし</span>
+        </label>
+      </div>
+      <div class="field" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="sswChk" style="width:14px;height:14px">
+          <span>スクリーンセイバー（テスト）</span>
+        </label>
+        <div id="sswField" style="display:none;margin-top:8px;">
+          <div class="field-label">周期 <em id="sswPeriodV">8 秒</em></div>
+          <input type="range" id="sswPeriodS" min="3" max="30" value="8">
+          <div class="field-label" style="margin-top:6px;">縮小率 <em id="sswScaleV">85%</em></div>
+          <input type="range" id="sswScaleS" min="50" max="95" value="85">
+          <div style="font-size:0.68rem;color:#777;margin-top:4px;line-height:1.4;">画像全体をDVDスクリーンセイバー風に動かします。周期の秒数ごとに必ず元の位置（中央）に戻ります。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card out-card">
+      <div class="card-title">動画として出力</div>
+      <div class="num-row">
+        <label>フレームレート</label>
+        <input type="number" id="fpsIn" value="60" min="1" max="60">
+        <span>fps</span>
+      </div>
+      <div class="num-row">
+        <label>録画時間</label>
+        <input type="number" id="durIn" value="1"  min="1" max="120">
+        <span>秒</span>
+      </div>
+      <div class="num-row">
+        <label>出力形式</label>
+        <select id="formatSel">
+          <option value="mp4" selected>MP4 (H.264)</option>
+          <option value="webm">WebM (VP9)</option>
+          <option value="gif">GIF アニメ</option>
+        </select>
+      </div>
+      <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;">
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="advChk" style="width:14px;height:14px">
+            <span>深層保護</span>
+          </label>
+        </div>
+        <div id="advField" style="display:none;margin-top:8px;">
+          <div class="field">
+            <div class="field-label">ε <em id="advEpsV">8</em>/255</div>
+            <input type="range" id="advEpsS" min="2" max="32" value="8">
+          </div>
+          <div class="field" style="margin-top:6px;">
+            <div class="field-label">Steps <em id="advStepsV">10</em></div>
+            <input type="range" id="advStepsS" min="3" max="30" value="10">
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+            <button class="btn btn-gray" id="loadModelBtn" style="flex:1;">準備</button>
+          </div>
+          <div id="modelStatus" style="font-size:0.72rem;color:var(--muted);margin-top:4px;">未準備 — 「準備」ボタンを押してください（約14MB）</div>
+          <div style="font-size:0.68rem;color:#777;margin-top:4px;line-height:1.4;">MP4エクスポート時に各フレームへ適用されます。処理時間が増加します。</div>
+        </div>
+      </div>
+      <button class="btn btn-blue btn-full" id="expBtn" disabled>動画を出力</button>
+      <div class="progress" id="prog">
+        <div class="progress-fill" id="progFill"></div>
+      </div>
+      <div class="status" id="st">画像を読み込んでください</div>
+    </div>
+
+
+    <div class="preview-col">
+      <div class="preview-pane">
+      <span class="preview-empty" id="emptyMsg">画像を読み込むとここに表示されます</span>
+      <canvas id="mainCanvas"></canvas>
+      <canvas id="regionOverlay"></canvas>
+      <div class="badge" id="badge"></div>
+      <div class="resize-grip" id="resizeGrip" title="ドラッグでプレビューの大きさを変更"></div>
+      </div>
+      <div style="display:flex;gap:7px;margin-top:2px;">
+        <button class="btn btn-blue" id="playBtn" disabled style="flex:1;">▶ 再生</button>
+        <button class="btn btn-gray" id="pauseBtn" disabled style="flex:1;">■ 停止</button>
+      </div>
+      <div id="regionControls" style="display:none;flex-wrap:wrap;gap:5px;margin-top:6px;">
+        <button class="btn btn-gray" id="drawRegionBtn" style="flex:1;font-size:0.82rem;">✏ 範囲指定</button>
+        <button class="btn btn-gray" id="clearRegionBtn" style="flex:1;font-size:0.82rem;">✕ 消去</button>
+        <button class="btn btn-gray" id="applyModeBtn" style="width:100%;font-size:0.82rem;">● 外側に適用</button>
+      </div>
+      <div id="mlStats" style="display:none;padding-top:5px;font-size:0.73rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+          <span style="color:var(--muted);" id="mlNoiseLabel">ノイズ注入量</span>
+          <strong id="mlNoise" style="color:var(--accent);font-size:0.78rem;"></strong>
+        </div>
+        <div style="height:3px;background:var(--border);border-radius:2px;margin-bottom:5px;overflow:hidden;">
+          <div id="mlNoiseBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.4s;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+          <span style="color:var(--muted);" id="mlFeatLabel">特徴量減少</span>
+          <strong id="mlFeat" style="color:var(--accent);font-size:0.78rem;"></strong>
+        </div>
+        <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
+          <div id="mlFeatBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.4s;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px;margin-bottom:2px;border-top:1px solid var(--border);padding-top:4px;">
+          <span style="color:var(--muted);" id="mlMultLabel">必要学習データ</span>
+          <strong id="mlMult" style="color:var(--accent);font-size:0.78rem;"></strong>
+        </div>
+        <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
+          <div id="mlMultBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.4s;"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:8px;">
+        <div class="card-title">検証: フレーム平均攻撃（テスト版）</div>
+        <div style="font-size:11px;color:#888;line-height:1.4;margin-bottom:8px">
+          スクリプトでフレームを単純平均した場合に、どこまで元画像へ復元されてしまうかを実測します。
+        </div>
+        <div class="field">
+          <div class="field-label">平均するフレーム数 <em id="avgNV">60</em></div>
+          <input type="range" id="avgNS" min="10" max="200" value="60">
+        </div>
+        <button class="btn btn-blue btn-full" id="avgTestBtn" disabled style="margin-top:8px">検証実行</button>
+        <div id="avgResult" style="display:none;margin-top:10px;">
+          <div style="display:flex;flex-direction:column;gap:14px;">
+            <div>
+              <div style="font-size:12px;color:#888;margin-bottom:5px;">元画像</div>
+              <div class="avg-thumb-box"><canvas id="avgOrigCanvas"></canvas></div>
+            </div>
+            <div>
+              <div style="font-size:12px;color:#888;margin-bottom:5px;">平均後の復元結果</div>
+              <div class="avg-thumb-box"><canvas id="avgResCanvas"></canvas></div>
+            </div>
+          </div>
+          <div style="font-size:0.75rem;margin-top:10px;line-height:1.6;">
+            <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">平均絶対誤差</span><strong id="avgMAE"></strong></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">PSNR</span><strong id="avgPSNR"></strong></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">判定</span><strong id="avgVerdict"></strong></div>
+            <div style="display:flex;justify-content:space-between;margin-top:5px;border-top:1px solid var(--border);padding-top:4px;"><span style="color:var(--muted);">復元された隠しメッセージ</span><strong id="avgMsg" style="color:var(--accent);"></strong></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div><!-- /layout -->
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0/dist/mobilenet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5/build/mp4-muxer.js"></script>
+<script>
+// ── GIF Encoder (self-contained, no external dependencies) ──────────────────
+const GIF_PALETTE = (() => {
+  const p = new Uint8Array(256 * 3);
+  let i = 0;
+  for (let r = 0; r < 6; r++) for (let g = 0; g < 6; g++) for (let b = 0; b < 6; b++) {
+    p[i++] = r * 51; p[i++] = g * 51; p[i++] = b * 51;  // 6×6×6 = 216 colors
+  }
+  for (let k = 0; k < 40; k++) {                         // + 40 grayscale shades
+    const v = Math.round(k * 255 / 39);
+    p[i++] = v; p[i++] = v; p[i++] = v;
+  }
+  return p;
+})();
+
+let _gifLut = null;  // 5-bit RGB → palette index, built lazily
+function getGifLut() {
+  if (_gifLut) return _gifLut;
+  _gifLut = new Uint8Array(32768);
+  for (let r5 = 0; r5 < 32; r5++) for (let g5 = 0; g5 < 32; g5++) for (let b5 = 0; b5 < 32; b5++) {
+    let best = 0, bestD = Infinity;
+    const r = r5 << 3, g = g5 << 3, b = b5 << 3;
+    for (let p = 0; p < 256; p++) {
+      const dr = r - GIF_PALETTE[p*3], dg = g - GIF_PALETTE[p*3+1], db = b - GIF_PALETTE[p*3+2];
+      const d = dr*dr + dg*dg + db*db;
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    _gifLut[(r5 << 10) | (g5 << 5) | b5] = best;
+  }
+  return _gifLut;
+}
+
+function quantizeToGif(rgba) {
+  const lut = getGifLut();
+  const n = rgba.length >> 2;
+  const idx = new Uint8Array(n);
+  for (let i = 0; i < n; i++)
+    idx[i] = lut[((rgba[i*4] >> 3) << 10) | ((rgba[i*4+1] >> 3) << 5) | (rgba[i*4+2] >> 3)];
+  return idx;
+}
+
+function lzwEncode(indices) {
+  const MIN = 8, CLEAR = 256, EOF = 257;
+  const out = []; let buf = 0, bufLen = 0;
+  function emit(code, bits) {
+    buf |= code << bufLen; bufLen += bits;
+    while (bufLen >= 8) { out.push(buf & 0xFF); buf >>= 8; bufLen -= 8; }
+  }
+  let codeSize = 9, limit = 512, next = 258;
+  const table = new Map();
+  function reset() { table.clear(); codeSize = 9; limit = 512; next = 258; }
+  reset();
+  emit(CLEAR, codeSize);
+  let prefix = indices[0];
+  for (let i = 1; i < indices.length; i++) {
+    const px = indices[i];
+    const key = (prefix << 8) | px;  // unique: px is always 0-255
+    if (table.has(key)) {
+      prefix = table.get(key);
+    } else {
+      emit(prefix, codeSize);
+      if (next < 4096) {
+        table.set(key, next++);
+        if (next > limit && codeSize < 12) { codeSize++; limit <<= 1; }
+      } else {
+        emit(CLEAR, codeSize); reset();
+      }
+      prefix = px;
+    }
+  }
+  emit(prefix, codeSize); emit(EOF, codeSize);
+  if (bufLen > 0) out.push(buf & 0xFF);
+  return new Uint8Array(out);
+}
+
+function buildGIF(w, h, frames, delayCs) {
+  const parts = [];
+  const B = (...v) => parts.push(new Uint8Array(v));
+  const W = n => [n & 0xFF, n >> 8 & 0xFF];
+
+  B(...[...'GIF89a'].map(c => c.charCodeAt(0)),
+    ...W(w), ...W(h), 0xF7, 0, 0);  // header + screen descriptor (256-color global palette)
+  parts.push(GIF_PALETTE);
+  B(0x21, 0xFF, 0x0B,
+    ...[...'NETSCAPE2.0'].map(c => c.charCodeAt(0)),
+    3, 1, 0, 0, 0);  // loop forever
+
+  for (const idx of frames) {
+    B(0x21, 0xF9, 4, 0, ...W(delayCs), 0, 0);   // graphic control
+    B(0x2C, ...W(0), ...W(0), ...W(w), ...W(h), 0); // image descriptor
+    B(8);                                            // min code size = 8
+    const cmp = lzwEncode(idx);
+    const sub = [];
+    for (let p = 0; p < cmp.length; p += 255) {
+      const len = Math.min(255, cmp.length - p);
+      sub.push(len);
+      for (let j = 0; j < len; j++) sub.push(cmp[p + j]);
+    }
+    sub.push(0);
+    parts.push(new Uint8Array(sub));
+  }
+  B(0x3B);  // trailer
+
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) { out.set(p, off); off += p.length; }
+  return out;
+}
+// ── End GIF Encoder ─────────────────────────────────────────────────────────
+
+(function () {
+  'use strict';
+
+  let COLS = 32, ROWS = 32;
+  const MAX_W = 640;  // display cap (pixels per second budget)
+
+  // ── DOM refs ─────────────────────────────────────────────────────────────
+  const dz       = document.getElementById('dz');
+  const fileIn   = document.getElementById('fileIn');
+  const dzThumb  = document.getElementById('dzThumb');
+  const dzName   = document.getElementById('dzName');
+  const playBtn  = document.getElementById('playBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const expBtn   = document.getElementById('expBtn');
+  const stEl     = document.getElementById('st');
+  const prog     = document.getElementById('prog');
+  const progFill = document.getElementById('progFill');
+  const emptyMsg = document.getElementById('emptyMsg');
+  const badge    = document.getElementById('badge');
+  const canvas   = document.getElementById('mainCanvas');
+  const ctx      = canvas.getContext('2d');
+
+  // Preview pane is user-resizable by dragging the grip at its bottom-right
+  // corner (custom drag, not CSS `resize:both` — that didn't reflow the
+  // controls below it in the same column in real time while dragging, so
+  // growing the pane visually ran into them instead of pushing them down).
+  // Mirror its live box size onto CSS vars so the averaging-test thumbnails
+  // always match the preview's current size.
+  const previewPane = document.querySelector('.preview-pane');
+  // mainCanvas is sized here as explicit px (object-fit:contain, computed by
+  // hand) rather than CSS width/height:100%: a flex item with an intrinsic
+  // aspect ratio can resolve percentage height against an indefinite/auto
+  // context in this layout, letting the canvas overflow its box — which then
+  // desyncs it from regionOverlay (sized correctly, see syncOverlaySize) and
+  // creates areas of the visible image the overlay can't receive clicks for.
+  function syncCanvasSize() {
+    if (!imgW || !imgH) return;
+    const boxW = previewPane.clientWidth, boxH = previewPane.clientHeight;
+    if (!boxW || !boxH) return;
+    const scale = Math.min(boxW / imgW, boxH / imgH);
+    canvas.style.width  = (imgW * scale) + 'px';
+    canvas.style.height = (imgH * scale) + 'px';
+  }
+  function syncPreviewSize() {
+    document.documentElement.style.setProperty('--preview-w', previewPane.clientWidth + 'px');
+    document.documentElement.style.setProperty('--preview-h', previewPane.clientHeight + 'px');
+    syncCanvasSize();
+    syncOverlaySize();
+  }
+  // ResizeObserver fires once asynchronously with the initial size, so no
+  // separate up-front call is needed (and none is safe here — regionOverlay-
+  // related consts used inside syncOverlaySize aren't declared until later
+  // in this scope).
+  new ResizeObserver(syncPreviewSize).observe(previewPane);
+
+  // Custom corner-drag resize: setting style.width/height directly on every
+  // move reflows the flex column synchronously, so the play/pause row,
+  // ML-stats panel and averaging-test card below always slide down to make
+  // room in real time — nothing to collide with as the pane grows.
+  // Mouse and touch share the same start/move/end logic; touch additionally
+  // needs `touch-action:none` (set in CSS) and preventDefault on touchstart/
+  // touchmove so the drag doesn't get hijacked as a page-scroll gesture.
+  const resizeGrip = document.getElementById('resizeGrip');
+  function beginResize(startX, startY) {
+    const rect = previewPane.getBoundingClientRect();
+    const startW = rect.width, startH = rect.height;
+    const maxW = window.innerWidth * 2.5;
+    const maxH = window.innerHeight * 5;
+    function apply(clientX, clientY) {
+      const w = Math.min(maxW, Math.max(220, startW + (clientX - startX)));
+      const h = Math.min(maxH, Math.max(160, startH + (clientY - startY)));
+      previewPane.style.width  = w + 'px';
+      previewPane.style.height = h + 'px';
+    }
+    function onMouseMove(ev) { apply(ev.clientX, ev.clientY); }
+    function onTouchMove(ev) {
+      ev.preventDefault();
+      const t = ev.touches[0];
+      apply(t.clientX, t.clientY);
+    }
+    // Both cleanups tear down every listener added below, regardless of
+    // which input ended the drag: a touch-started drag still leaves the
+    // mouse listeners attached otherwise, and mobile browsers synthesize a
+    // mousemove/mouseup/click after every tap — the very next tap anywhere
+    // on the page (e.g. Play) would then replay stale drag math and snap
+    // the pane down to its min-width/min-height.
+    function cleanup() {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', cleanup);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', cleanup);
+      document.removeEventListener('touchcancel', cleanup);
+    }
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', cleanup);
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', cleanup);
+    document.addEventListener('touchcancel', cleanup);
+  }
+  resizeGrip.addEventListener('mousedown', e => {
+    e.preventDefault();
+    beginResize(e.clientX, e.clientY);
+  });
+  resizeGrip.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    beginResize(t.clientX, t.clientY);
+  }, { passive: false });
+
+  const hueS     = document.getElementById('hueS');
+  const litS     = document.getElementById('litS');
+  const satS     = document.getElementById('satS');
+  const mlGuardHF   = document.getElementById('mlGuardHF');
+  const mlGuardGrid = document.getElementById('mlGuardGrid');
+  const mlAmpS   = document.getElementById('mlAmpS');
+  const msgChk   = document.getElementById('msgChk');
+  const msgText  = document.getElementById('msgText');
+  const ocrChk   = document.getElementById('ocrChk');
+  const ocrAmpS  = document.getElementById('ocrAmpS');
+  const ocrDarkChk = document.getElementById('ocrDarkChk');
+  const blurChk  = document.getElementById('blurChk');
+  const blurS    = document.getElementById('blurS');
+  const warpChk    = document.getElementById('warpChk');
+  const warpS      = document.getElementById('warpS');
+  const voronoiChk = document.getElementById('voronoiChk');
+  const morphS        = document.getElementById('morphS');
+  const detailChk     = document.getElementById('detailChk');
+  const sepS          = document.getElementById('sepS');
+  const edgeBrightS   = document.getElementById('edgeBrightS');
+  const reprocessBtn  = document.getElementById('reprocessBtn');
+
+  const sswChk      = document.getElementById('sswChk');
+  const sswField    = document.getElementById('sswField');
+  const sswPeriodS  = document.getElementById('sswPeriodS');
+  const sswScaleS   = document.getElementById('sswScaleS');
+
+  // Screensaver shift is suppressed while drawMode is active: region-selection
+  // coordinates are recorded in original (full-size, unshifted) image space, so
+  // the displayed frame must stay full-size whenever the user might click to
+  // place a point — otherwise the guide the user sees and the mask that gets
+  // stored end up in different places. (drawMode is declared later in this
+  // file but already initialized by the time any of these callbacks run.)
+  const redrawIfStopped = () => {
+    if (!playing && hslBuf) {
+      drawNoise();
+      if (sswChk.checked && !drawMode) applyScreensaver(0);
+    }
+    updateMLResistance();
+  };
+
+  sswChk.addEventListener('change', () => {
+    sswField.style.display = sswChk.checked ? 'block' : 'none';
+    redrawIfStopped();
+  });
+  sswPeriodS.addEventListener('input', () => {
+    document.getElementById('sswPeriodV').textContent = sswPeriodS.value + ' 秒';
+    redrawIfStopped();
+  });
+  sswScaleS.addEventListener('input', () => {
+    document.getElementById('sswScaleV').textContent = sswScaleS.value + '%';
+    redrawIfStopped();
+  });
+
+  blurS.addEventListener('input', () => { document.getElementById('blurV').textContent = blurS.value + 'px'; redrawIfStopped(); });
+  warpS.addEventListener('input', () => { document.getElementById('warpV').textContent = warpS.value + 'px'; redrawIfStopped(); });
+  document.getElementById('blurChk').addEventListener('change', redrawIfStopped);
+  document.getElementById('warpChk').addEventListener('change', redrawIfStopped);
+  document.getElementById('noiseSel').addEventListener('change', redrawIfStopped);
+  mlGuardHF.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
+  mlGuardGrid.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
+  mlAmpS.addEventListener('input', () => {
+    document.getElementById('mlAmpV').textContent = mlAmpS.value;
+    regenerateOverlay();
+    redrawIfStopped();
+  });
+  msgChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
+  msgText.addEventListener('input', () => {
+    document.getElementById('msgLenV').textContent = msgText.value.length;
+    regenerateOverlay();
+    redrawIfStopped();
+  });
+  ocrChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
+  ocrAmpS.addEventListener('input', () => {
+    document.getElementById('ocrAmpV').textContent = ocrAmpS.value;
+    regenerateOverlay();
+    redrawIfStopped();
+  });
+  ocrDarkChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
+
+  (function () {
+    const THUMB_HIT = 32; // px: how close to thumb center touch must land
+    document.querySelectorAll('input[type=range]').forEach(slider => {
+      let pid = null;
+      slider.addEventListener('pointerdown', e => {
+        if (e.pointerType !== 'touch') return;
+        e.preventDefault(); // always block default jump-to-click behavior
+        const r = slider.getBoundingClientRect();
+        const ratio = (+slider.value - +slider.min) / (+slider.max - +slider.min);
+        const thumbX = r.left + ratio * r.width;
+        if (Math.abs(e.clientX - thumbX) > THUMB_HIT) return; // not on thumb — ignore
+        slider.setPointerCapture(e.pointerId);
+        pid = e.pointerId;
+      });
+      slider.addEventListener('pointermove', e => {
+        if (e.pointerId !== pid) return;
+        const r = slider.getBoundingClientRect();
+        const v = Math.round(+slider.min + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (+slider.max - +slider.min));
+        if (+slider.value !== v) { slider.value = v; slider.dispatchEvent(new Event('input')); }
+      });
+      slider.addEventListener('pointerup',     e => { if (e.pointerId === pid) pid = null; });
+      slider.addEventListener('pointercancel', e => { if (e.pointerId === pid) pid = null; });
+    });
+  })();
+
+  document.getElementById('previewFps').addEventListener('input', () => { document.getElementById('fpsV').textContent = document.getElementById('previewFps').value + ' fps'; });
+  hueS.addEventListener('input', () => { document.getElementById('hueV').textContent = `± ${hueS.value}°`; redrawIfStopped(); });
+  litS.addEventListener('input', () => { document.getElementById('litV').textContent = `± ${litS.value}%`; redrawIfStopped(); });
+  satS.addEventListener('input', () => { document.getElementById('satV').textContent = `± ${satS.value}%`; redrawIfStopped(); });
+
+  morphS.addEventListener('input', () => { document.getElementById('morphV').textContent = morphS.value + ' f'; updateMLResistance(); });
+
+  voronoiChk.addEventListener('change', () => {
+    document.getElementById('morphField').style.display = voronoiChk.checked ? 'block' : 'none';
+    if (voronoiChk.checked && hslBuf) { regenerateSeeds(); if (!playing) drawNoise(); }
+    else if (!voronoiChk.checked && !playing && hslBuf) drawNoise();
+    updateMLResistance();
+  });
+
+  sepS.addEventListener('input', () => { document.getElementById('sepV').textContent = sepS.value + 'px'; updateMLResistance(); });
+  edgeBrightS.addEventListener('input', () => { document.getElementById('edgeBrightV').textContent = edgeBrightS.value + '%'; redrawIfStopped(); });
+  reprocessBtn.addEventListener('click', () => { if (origCanvas) decompose(); });
+  detailChk.addEventListener('change', () => {
+    document.getElementById('detailField').style.display = detailChk.checked ? 'block' : 'none';
+    if (detailChk.checked) {
+      reprocessBtn.disabled = !hslBuf;
+      if (hslBuf) decompose();
+    } else {
+      reprocessBtn.disabled = true;
+      lowHslBuf = null; edgeBuf = null;
+      if (!playing && hslBuf) drawNoise();
+    }
+    updateMLResistance();
+  });
+
+  document.getElementById('gridSel').addEventListener('change', () => {
+    const n = parseInt(document.getElementById('gridSel').value);
+    COLS = n; ROWS = n;
+    if (hslBuf) {
+      rebuildCellBnds();
+      if (voronoiChk.checked) { regenerateSeeds(); if (!playing) drawNoise(); }
+    }
+  });
+
+  function rebuildCellBnds() {
+    const cellW = imgW / COLS, cellH = imgH / ROWS;
+    cellBnds = new Array(ROWS * COLS);
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const x  = Math.round(col * cellW);
+        const y  = Math.round(row * cellH);
+        const cw = Math.round((col + 1) * cellW) - x;
+        const ch = Math.round((row + 1) * cellH) - y;
+        cellBnds[row * COLS + col] = { x, y, cw, ch };
+      }
+    }
+  }
+
+  function regenerateSeeds() {
+    const N = COLS * ROWS;
+    const w = imgW, h = imgH;
+    if (!w) return;
+    const cellW = w / COLS, cellH = h / ROWS;
+    cellSeeds = new Float32Array(N * 2);
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const ci = row * COLS + col;
+        cellSeeds[ci * 2]     = (col + 0.25 + Math.random() * 0.5) * cellW;
+        cellSeeds[ci * 2 + 1] = (row + 0.25 + Math.random() * 0.5) * cellH;
+      }
+    }
+    _cWdx = new Float32Array(N); _cWdy = new Float32Array(N);
+    _cDl  = new Float32Array(N); _cDs  = new Float32Array(N);
+    _cCdR = new Float32Array(N); _cCdG = new Float32Array(N); _cCdB = new Float32Array(N);
+    _cBright = new Float32Array(N);
+    buildCellMap();
+  }
+
+  function buildCellMap() {
+    const w = imgW, h = imgH;
+    const cellW = w / COLS, cellH = h / ROWS;
+    cellMap = new Int32Array(w * h);
+    for (let py = 0; py < h; py++) {
+      const rowC = py / cellH | 0;
+      const r0 = rowC - 1 < 0 ? 0 : rowC - 1;
+      const r1 = rowC + 1 >= ROWS ? ROWS - 1 : rowC + 1;
+      for (let px = 0; px < w; px++) {
+        const colC = px / cellW | 0;
+        const c0 = colC - 1 < 0 ? 0 : colC - 1;
+        const c1 = colC + 1 >= COLS ? COLS - 1 : colC + 1;
+        let bestD = Infinity, bestCi = 0;
+        for (let row = r0; row <= r1; row++) {
+          for (let col = c0; col <= c1; col++) {
+            const ci = row * COLS + col;
+            const dx = px - cellSeeds[ci * 2];
+            const dy = py - cellSeeds[ci * 2 + 1];
+            const d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; bestCi = ci; }
+          }
+        }
+        cellMap[py * w + px] = bestCi;
+      }
+    }
+  }
+
+  function decompose() {
+    if (!origCanvas) return;
+    const w = imgW, h = imgH;
+    const radius = +sepS.value;
+    const origPixels = origCanvas.getContext('2d').getImageData(0, 0, w, h).data;
+    const blurCanvas = document.createElement('canvas');
+    blurCanvas.width = w; blurCanvas.height = h;
+    const blurCtx = blurCanvas.getContext('2d');
+    blurCtx.filter = `blur(${radius}px)`;
+    blurCtx.drawImage(origCanvas, 0, 0);
+    const blurPixels = blurCtx.getImageData(0, 0, w, h).data;
+    lowHslBuf = new Float32Array(w * h * 3);
+    edgeBuf   = new Float32Array(w * h * 3);
+    for (let i = 0; i < w * h; i++) {
+      const i4 = i * 4, i3 = i * 3;
+      const [hv, sv, lv] = rgbToHsl(
+        blurPixels[i4]     / 255,
+        blurPixels[i4 + 1] / 255,
+        blurPixels[i4 + 2] / 255
+      );
+      lowHslBuf[i3]     = hv;
+      lowHslBuf[i3 + 1] = sv;
+      lowHslBuf[i3 + 2] = lv;
+      edgeBuf[i3]     = origPixels[i4]     - blurPixels[i4];
+      edgeBuf[i3 + 1] = origPixels[i4 + 1] - blurPixels[i4 + 1];
+      edgeBuf[i3 + 2] = origPixels[i4 + 2] - blurPixels[i4 + 2];
+    }
+    if (!playing) drawNoise();
+  }
+
+  function drawNoiseDetail() {
+    if (!lowHslBuf) return;
+    const w = imgW, h = imgH;
+    const out = outBuf;
+    const chromaAmp = +hueS.value / 180 * 128;
+    const dL = +litS.value;
+    const dS = +satS.value;
+    const warpOn = warpChk.checked;
+    const warpR  = warpOn ? +warpS.value : 0;
+    const brightAmp = +edgeBrightS.value / 100;
+
+    for (let ci = 0; ci < ROWS * COLS; ci++) {
+      const { x: cx, y: cy, cw, ch } = cellBnds[ci];
+      let theta, dl, ds, wdx, wdy, bright;
+      if (cycleN >= 2 && _cbTheta) {
+        const ph = cycleFrame * 6.2831853 / cycleN;
+        theta = _cbTheta[ci]  + ph;
+        dl    = Math.cos(_cbDl[ci]     + ph) * dL;
+        ds    = Math.cos(_cbDs[ci]     + ph) * dS;
+        wdx   = warpOn ? Math.cos(_cbWdx[ci]   + ph) * warpR : 0;
+        wdy   = warpOn ? Math.cos(_cbWdy[ci]    + ph) * warpR : 0;
+        bright = Math.cos(_cbBright[ci] + ph) * brightAmp;
+      } else {
+        theta = Math.random() * 6.2831853;
+        dl    = (Math.random() * 2 - 1) * dL;
+        ds    = (Math.random() * 2 - 1) * dS;
+        wdx   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        wdy   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        bright = (Math.random() * 2 - 1) * brightAmp;
+      }
+      const cosT = Math.cos(theta), sinT = Math.sin(theta);
+      const dR =  chromaAmp *  cosT;
+      const dG =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
+      const dB =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
+
+      for (let py = cy; py < cy + ch; py++) {
+        const rowBase = py * w;
+        for (let px = cx; px < cx + cw; px++) {
+          const i  = rowBase + px;
+          const i4 = i * 4;
+          const i3 = i * 3;
+
+          let sv = lowHslBuf[i3 + 1] + ds;
+          if (sv < 0) sv = 0; else if (sv > 100) sv = 100;
+          let lv = lowHslBuf[i3 + 2] + dl;
+          if (lv < 0) lv = 0; else if (lv > 100) lv = 100;
+          const hv = lowHslBuf[i3];
+          const sn = sv / 100, ln = lv / 100;
+          const a  = sn * (ln < 0.5 ? ln : 1 - ln);
+          const h30 = hv / 30;
+          let k, t, u;
+
+          k = h30 % 12;
+          t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+          let r = (ln - a * t) * 255;
+          k = (h30 + 8) % 12;
+          t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+          let g = (ln - a * t) * 255;
+          k = (h30 + 4) % 12;
+          t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+          let b = (ln - a * t) * 255;
+
+          r += dR; if(r<0)r=0; else if(r>255)r=255;
+          g += dG; if(g<0)g=0; else if(g>255)g=255;
+          b += dB; if(b<0)b=0; else if(b>255)b=255;
+
+          const sx  = Math.min(w-1, Math.max(0, (px + wdx) | 0));
+          const sy  = Math.min(h-1, Math.max(0, (py + wdy) | 0));
+          const ei3 = (sy * w + sx) * 3;
+          const mul = 1 + bright;
+          r += edgeBuf[ei3]     * mul; if(r<0)r=0; else if(r>255)r=255;
+          g += edgeBuf[ei3 + 1] * mul; if(g<0)g=0; else if(g>255)g=255;
+          b += edgeBuf[ei3 + 2] * mul; if(b<0)b=0; else if(b>255)b=255;
+
+          if (fixedOverlay) {
+            const oi = i * 3;
+            r += fixedOverlay[oi];     if(r<0)r=0; else if(r>255)r=255;
+            g += fixedOverlay[oi + 1]; if(g<0)g=0; else if(g>255)g=255;
+            b += fixedOverlay[oi + 2]; if(b<0)b=0; else if(b>255)b=255;
+          }
+
+          out[i4]     = r + 0.5 | 0;
+          out[i4 + 1] = g + 0.5 | 0;
+          out[i4 + 2] = b + 0.5 | 0;
+        }
+      }
+    }
+
+    ctx.putImageData(imgDataObj, 0, 0);
+    if (blurChk.checked && blurOffscreen) {
+      blurOCtx.filter = `blur(${blurS.value}px)`;
+      blurOCtx.drawImage(canvas, 0, 0);
+      ctx.drawImage(blurOffscreen, 0, 0);
+    }
+  }
+
+  function drawNoiseDetailVoronoi() {
+    if (!lowHslBuf || !cellMap) return;
+    const N = COLS * ROWS;
+    const w = imgW, h = imgH;
+    const out = outBuf;
+    const chromaAmp = +hueS.value / 180 * 128;
+    const dL = +litS.value;
+    const dS = +satS.value;
+    const warpOn = warpChk.checked;
+    const warpR  = warpOn ? +warpS.value : 0;
+    const brightAmp = +edgeBrightS.value / 100;
+
+    for (let ci = 0; ci < N; ci++) {
+      let theta;
+      if (cycleN >= 2 && _cbTheta) {
+        const ph = cycleFrame * 6.2831853 / cycleN;
+        theta = _cbTheta[ci]  + ph;
+        _cDl[ci]     = Math.cos(_cbDl[ci]     + ph) * dL;
+        _cDs[ci]     = Math.cos(_cbDs[ci]     + ph) * dS;
+        _cWdx[ci]    = warpOn ? Math.cos(_cbWdx[ci]   + ph) * warpR : 0;
+        _cWdy[ci]    = warpOn ? Math.cos(_cbWdy[ci]    + ph) * warpR : 0;
+        _cBright[ci] = Math.cos(_cbBright[ci] + ph) * brightAmp;
+      } else {
+        theta = Math.random() * 6.2831853;
+        _cDl[ci]     = (Math.random() * 2 - 1) * dL;
+        _cDs[ci]     = (Math.random() * 2 - 1) * dS;
+        _cWdx[ci]    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        _cWdy[ci]    = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        _cBright[ci] = (Math.random() * 2 - 1) * brightAmp;
+      }
+      const cosT = Math.cos(theta), sinT = Math.sin(theta);
+      _cCdR[ci] =  chromaAmp *  cosT;
+      _cCdG[ci] =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
+      _cCdB[ci] =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
+    }
+
+    for (let py = 0; py < h; py++) {
+      const rowBase = py * w;
+      for (let px = 0; px < w; px++) {
+        const i  = rowBase + px;
+        const i4 = i * 4;
+        const i3 = i * 3;
+        const ci = cellMap[i];
+
+        let sv = lowHslBuf[i3 + 1] + _cDs[ci];
+        if (sv < 0) sv = 0; else if (sv > 100) sv = 100;
+        let lv = lowHslBuf[i3 + 2] + _cDl[ci];
+        if (lv < 0) lv = 0; else if (lv > 100) lv = 100;
+        const hv = lowHslBuf[i3];
+        const sn = sv / 100, ln = lv / 100;
+        const a  = sn * (ln < 0.5 ? ln : 1 - ln);
+        const h30 = hv / 30;
+        let k, t, u;
+
+        k = h30 % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let r = (ln - a * t) * 255;
+        k = (h30 + 8) % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let g = (ln - a * t) * 255;
+        k = (h30 + 4) % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let b = (ln - a * t) * 255;
+
+        r += _cCdR[ci]; if(r<0)r=0; else if(r>255)r=255;
+        g += _cCdG[ci]; if(g<0)g=0; else if(g>255)g=255;
+        b += _cCdB[ci]; if(b<0)b=0; else if(b>255)b=255;
+
+        const sx  = Math.min(w-1, Math.max(0, (px + _cWdx[ci]) | 0));
+        const sy  = Math.min(h-1, Math.max(0, (py + _cWdy[ci]) | 0));
+        const ei3 = (sy * w + sx) * 3;
+        const mul = 1 + _cBright[ci];
+        r += edgeBuf[ei3]     * mul; if(r<0)r=0; else if(r>255)r=255;
+        g += edgeBuf[ei3 + 1] * mul; if(g<0)g=0; else if(g>255)g=255;
+        b += edgeBuf[ei3 + 2] * mul; if(b<0)b=0; else if(b>255)b=255;
+
+        if (fixedOverlay) {
+          const oi = i * 3;
+          r += fixedOverlay[oi];     if(r<0)r=0; else if(r>255)r=255;
+          g += fixedOverlay[oi + 1]; if(g<0)g=0; else if(g>255)g=255;
+          b += fixedOverlay[oi + 2]; if(b<0)b=0; else if(b>255)b=255;
+        }
+
+        out[i4]     = r + 0.5 | 0;
+        out[i4 + 1] = g + 0.5 | 0;
+        out[i4 + 2] = b + 0.5 | 0;
+      }
+    }
+
+    ctx.putImageData(imgDataObj, 0, 0);
+    if (blurChk.checked && blurOffscreen) {
+      blurOCtx.filter = `blur(${blurS.value}px)`;
+      blurOCtx.drawImage(canvas, 0, 0);
+      ctx.drawImage(blurOffscreen, 0, 0);
+    }
+  }
+
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let hslBuf     = null;  // Float32Array  h0,s0,l0, h1,s1,l1 ... (per pixel)
+  let outBuf     = null;  // Uint8ClampedArray RGBA output
+  let imgDataObj = null;  // ImageData wrapping outBuf
+  let origCanvas = null;  // offscreen canvas holding the scaled original
+  let cellBnds   = null;  // [{x,y,cw,ch}] for each of ROWS×COLS cells
+  let imgW = 0, imgH = 0;
+
+  // Image orientation (rotate/flip), applied when drawing into origCanvas.
+  // Re-orienting a photo can noticeably degrade recognition for some AI
+  // vision models trained mostly on upright images, while a human viewer
+  // can still recognize a rotated/mirrored photo without much trouble.
+  let loadedImg = null, loadedName = '';
+  let loadedVideo = null;  // <video> element when a video file was loaded instead of an image
+  let orientRotation = 0;      // 0, 90, 180, 270 (clockwise)
+  let orientFlipH = false, orientFlipV = false;
+
+  let animId      = null;
+  let playing     = false;
+  let exporting   = false;
+  let expInterval = null;
+  let frameCount  = 0;
+
+  let cellMap   = null;
+  let cellSeeds = null;
+  let _cWdx, _cWdy, _cDl, _cDs, _cCdR, _cCdG, _cCdB, _cBright;
+  let lowHslBuf = null;
+  let edgeBuf   = null;
+  let advModelReady = false;
+  let advMNInstance = null;
+  let cycleN = 1;
+  let cycleFrame = 0;
+  let _cbTheta, _cbDl, _cbDs, _cbWdx, _cbWdy, _cbBright;
+  let imageVar     = 0;   // per-channel signal variance of original image
+  let imageGradVar = 0;   // per-pixel gradient variance (warp noise proxy)
+
+  let fixedOverlay = null;  // Float32Array [r,g,b,...] fixed adversarial pattern per pixel
+  let blurOffscreen = null, blurOCtx = null;  // ぼかし用オフスクリーンキャンバス
+
+  // ── Screensaver mode (test) ──────────────────────────────────────────────
+  // Moves the whole rendered frame around inside the canvas, DVD-logo style:
+  // independent bounce (triangle wave) motion on x and y, with periods that
+  // are exact fractions (period/3, period/2) of the configured cycle length.
+  // Because both periods divide the cycle length evenly, the combined
+  // position is guaranteed to be exactly (0,0) — i.e. back at the original
+  // centered framing — at t=0, t=period, t=2*period, ... with no drift.
+  let sswStartTs = null;          // performance.now()-basis timestamp of the current play session's first frame
+  let sswSnapshotCanvas = null;   // offscreen buffer holding the undisplaced frame, reused across calls
+
+  function sswTriWave(t, P) {
+    // Triangle wave in [-1, 1]; sswTriWave(0, P) === 0, matching the resting/original position.
+    const u = (((t % P) + P) % P) / P;
+    if (u < 0.25) return u * 4;
+    if (u < 0.75) return 2 - u * 4;
+    return u * 4 - 4;
+  }
+
+  function applyScreensaver(tSec) {
+    const period = Math.max(1, +sswPeriodS.value || 8);
+    const scale  = Math.min(0.98, Math.max(0.5, (+sswScaleS.value || 85) / 100));
+    const rx = imgW * (1 - scale) / 2;
+    const ry = imgH * (1 - scale) / 2;
+    const baseX = rx, baseY = ry; // resting (t=0) position: centered
+    const drawX = baseX + rx * sswTriWave(tSec, period / 3);
+    const drawY = baseY + ry * sswTriWave(tSec, period / 2);
+
+    if (!sswSnapshotCanvas) {
+      sswSnapshotCanvas = document.createElement('canvas');
+    }
+    if (sswSnapshotCanvas.width !== imgW || sswSnapshotCanvas.height !== imgH) {
+      sswSnapshotCanvas.width = imgW; sswSnapshotCanvas.height = imgH;
+    }
+    const sctx = sswSnapshotCanvas.getContext('2d');
+    sctx.clearRect(0, 0, imgW, imgH);
+    sctx.drawImage(canvas, 0, 0);
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, imgW, imgH);
+    ctx.drawImage(sswSnapshotCanvas, 0, 0, imgW, imgH, drawX, drawY, imgW * scale, imgH * scale);
+  }
+
+  // ── Color math ────────────────────────────────────────────────────────────
+  function rgbToHsl(r, g, b) {  // r,g,b ∈ [0,1]  →  [h∈[0,360), s∈[0,100], l∈[0,100]]
+    const max = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    const min = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    const l = (max + min) * 0.5;
+    if (max === min) return [0, 0, l * 100];
+    const d = max - min;
+    const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    let h;
+    if      (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else                h = (r - g) / d + 4;
+    return [h * 60, s * 100, l * 100];
+  }
+
+  // ── Hidden message (experimental) ────────────────────────────────────────
+  // Encodes a short machine-readable declaration into its own fixed 32x32
+  // block grid within the overlay, independent of the 8x8 AI-disruption
+  // block-bias grid above.
+  //
+  // Manchester-coded, not a plain threshold: each bit gets TWO blocks, one
+  // carrying the bit and one carrying its complement (+AMP/-AMP or vice
+  // versa), repeated MSG_REDUNDANCY times. Decoding compares each bit's own
+  // two halves against each other, never against a global threshold.
+  // This matters because a plain "value > 0" or "value > median" threshold
+  // breaks whenever the message is bit-unbalanced (any short message is —
+  // mostly zero-padding): the per-channel DC-removal step below normalizes
+  // the *whole* overlay to zero mean, which shifts a skewed message layer's
+  // 1-cluster and 0-cluster by the same absolute amount but leaves them very
+  // different distances from zero, so a shared threshold misclassifies most
+  // of whichever bit value is in the minority. Differential comparison
+  // within each bit's own pair cancels any shared shift automatically.
+  // Not yet verified to survive actual MP4/WebM/GIF export compression,
+  // only in-app frame averaging (see the 検証カード).
+  const MSG_BYTES = 32, MSG_BITS = MSG_BYTES * 8, MSG_REDUNDANCY = 2;
+  const MSG_SLOTS_PER_REP = MSG_BITS * 2;                    // 512 (bit + complement)
+  const MSG_GRID = Math.sqrt(MSG_SLOTS_PER_REP * MSG_REDUNDANCY); // 32x32 = 1024 blocks
+  const MSG_AMP  = 14;
+
+  function textToBits(text) {
+    const bytes = new TextEncoder().encode(text);
+    const bits = new Uint8Array(MSG_BITS);
+    for (let i = 0; i < MSG_BYTES; i++) {
+      const b = i < bytes.length ? bytes[i] : 0;
+      for (let k = 0; k < 8; k++) bits[i * 8 + k] = (b >> (7 - k)) & 1;
+    }
+    return bits;
+  }
+
+  // Fixed pseudo-random permutation, applied SEPARATELY within each half of
+  // the grid (rows 0-15 / rows 16-31). Without this, `half` (see msgSlotAt)
+  // works out to exactly `bx % 2` — an even/odd *column* — because blocks
+  // are numbered in simple row-major order and MSG_GRID is even. Any run of
+  // identical bits (guaranteed for any message shorter than 32 bytes: the
+  // padding is all zero) then paints a dead-flat vertical stripe for
+  // however many rows share that padding, since with a constant bit the
+  // sign is determined by column parity alone. Shuffling within each half
+  // scrambles that correlation while keeping the top-half/bottom-half split
+  // intact for the two MSG_REDUNDANCY copies — an earlier version permuted
+  // the full 1024-block grid in one pass, which killed the stripes but let
+  // both redundant copies of a bit land in similarly bad (clipping-prone)
+  // spots by chance on some images, since they were no longer guaranteed to
+  // come from spatially distinct top/bottom halves. Must be identical
+  // between encode and decode.
+  function buildMsgPermutation(n, seed) {
+    function rand() { seed = (Math.imul(seed, 1664525) + 1013904223) | 0; return (seed >>> 0) / 0x100000000; }
+    const arr = Array.from({ length: n }, (_, i) => i);
+    for (let i = n - 1; i > 0; i--) {
+      const j = (rand() * (i + 1)) | 0;
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  // Shared (row, col) → (bitIndex, half) mapping used by both encode and decode.
+  function msgSlotAt(by, bx) {
+    if (!msgSlotAt._perms) {
+      msgSlotAt._perms = [
+        buildMsgPermutation(MSG_SLOTS_PER_REP, 0x9e3779b9),
+        buildMsgPermutation(MSG_SLOTS_PER_REP, 0x517cc1b7),
+      ];
+    }
+    const half0Rows = MSG_GRID / 2; // rows 0..half0Rows-1 = repetition 0, rest = repetition 1
+    const rep = by < half0Rows ? 0 : 1;
+    const localIndex = (by % half0Rows) * MSG_GRID + bx; // 0..MSG_SLOTS_PER_REP-1 within this half
+    const shuffled = msgSlotAt._perms[rep][localIndex];
+    return { bitIndex: shuffled >> 1, half: shuffled & 1 };
+  }
+
+  function decodeMessage(avgData, origPixels, w, h) {
+    const blockW = Math.ceil(w / MSG_GRID), blockH = Math.ceil(h / MSG_GRID);
+    const halfSum = [new Float64Array(MSG_BITS), new Float64Array(MSG_BITS)];
+    const halfCnt = [new Int32Array(MSG_BITS), new Int32Array(MSG_BITS)];
+    for (let by = 0; by < MSG_GRID; by++) {
+      for (let bx = 0; bx < MSG_GRID; bx++) {
+        const { bitIndex, half } = msgSlotAt(by, bx);
+        const x0 = bx * blockW, x1 = Math.min(w, x0 + blockW);
+        const y0 = by * blockH, y1 = Math.min(h, y0 + blockH);
+        let diffSum = 0, n = 0;
+        for (let y = y0; y < y1; y++) {
+          for (let x = x0; x < x1; x++) {
+            const p = (y * w + x) * 4;
+            diffSum += (avgData[p] - origPixels[p]) + (avgData[p + 1] - origPixels[p + 1]) + (avgData[p + 2] - origPixels[p + 2]);
+            n += 3;
+          }
+        }
+        halfSum[half][bitIndex] += diffSum / n;
+        halfCnt[half][bitIndex] += 1;
+      }
+    }
+    const bytes = new Uint8Array(MSG_BYTES);
+    for (let i = 0; i < MSG_BYTES; i++) {
+      let b = 0;
+      for (let k = 0; k < 8; k++) {
+        const bitIndex = i * 8 + k;
+        const v0 = halfSum[0][bitIndex] / halfCnt[0][bitIndex];
+        const v1 = halfSum[1][bitIndex] / halfCnt[1][bitIndex];
+        b = (b << 1) | (v0 > v1 ? 1 : 0);
+      }
+      bytes[i] = b;
+    }
+    let end = MSG_BYTES;
+    while (end > 0 && bytes[end - 1] === 0) end--;
+    if (end === 0) return null;
+    // Non-fatal: a handful of bit errors should show up as a stray "�"
+    // character, not blow up the whole message the way `fatal:true` would
+    // (UTF-8 validity breaks on a single flipped high bit).
+    return new TextDecoder('utf-8').decode(bytes.slice(0, end));
+  }
+
+  // ── OCR-readable text (experimental) ─────────────────────────────────────
+  // The Manchester-coded message above is NOT readable by a generic vision
+  // model (ChatGPT, Claude, etc.) — it's abstract bit data with no letter
+  // shapes in it, decodable only by decodeMessage()'s own math. To actually
+  // be readable by a generic AI, the message needs real glyphs in the pixel
+  // data: this renders the text (tiled, to survive cropping) onto an
+  // offscreen canvas and returns a 0..1 ink-coverage mask, which
+  // generateOverlay() then adds as a low-contrast brightness bias — visible
+  // in a SINGLE frame (unlike the other layers, which lean on frame
+  // averaging), because a generic AI just looks at whatever frame(s) it's
+  // given and doesn't run our decode algorithm.
+  function renderTextBiasMask(message, w, h) {
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d');
+    octx.fillStyle = '#000';
+    octx.fillRect(0, 0, w, h);
+    const fontSize = Math.max(10, Math.round(Math.min(w, h) * 0.06));
+    octx.font = `bold ${fontSize}px monospace`;
+    octx.fillStyle = '#fff';
+    octx.textBaseline = 'top';
+    const label = message + '   ';
+    const tw = Math.max(1, octx.measureText(label).width);
+    const lineH = fontSize * 1.7;
+    for (let y = -lineH, row = 0; y < h + lineH; y += lineH, row++) {
+      const rowOffset = (row % 2) * (tw / 2);
+      for (let x = -tw - rowOffset; x < w; x += tw) octx.fillText(label, x, y);
+    }
+    const data = octx.getImageData(0, 0, w, h).data;
+    const mask = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) mask[i] = data[i * 4] / 255; // white text on black → red channel = coverage
+    return mask;
+  }
+
+  // ── ML-protection overlay ────────────────────────────────────────────────
+  // Generates a fixed pattern seeded from the image, added identically to
+  // every rendered frame (unlike the per-cell HSL noise, which is zero-mean
+  // and cancels out under naive frame averaging).
+  // Bands, deliberately far apart in spatial frequency, so a single
+  // narrowband filter can't strip all of them at once:
+  //   - High-frequency sinusoids: period 2-5 px → above human CSF cutoff (~30 cpd)
+  //   - Low-frequency block bias: coarse 8x8 grid, well below the visible
+  //     noise-cell grid resolution
+  //   - Hidden message: independent 32x32 block grid (see above)
+  //   - OCR-readable text: real glyphs, low contrast (see above)
+  // All layers are zero-mean per channel (no DC shift), and all survive
+  // temporal frame averaging by construction — they disrupt CNN feature maps
+  // (or, for the message, stay readable) even after an attacker mean-stacks
+  // captured frames.
+  function generateOverlay(pixels, w, h, amp, message, includeHF, includeGrid) {
+    const overlay = new Float32Array(w * h * 3);
+
+    // Derive a deterministic seed from image content
+    let seed = 0x12345678;
+    const step = Math.max(1, ((w * h) / 512) | 0);
+    for (let i = 0; i < w * h; i += step) {
+      seed = Math.imul(seed ^ pixels[i * 4],     0x9e3779b9) | 0;
+      seed = Math.imul(seed ^ pixels[i * 4 + 1], 0x6c62272e) | 0;
+      seed = Math.imul(seed ^ pixels[i * 4 + 2], 0x517cc1b7) | 0;
+    }
+    function rand() {
+      seed = (Math.imul(seed, 1664525) + 1013904223) | 0;
+      return (seed >>> 0) / 0x100000000;
+    }
+
+    const totalAmp = amp || 16;    // total amplitude budget per channel (RGB units)
+    const AMP   = totalAmp * 0.6;  // high-frequency sinusoidal share
+    const N     = 5;               // sinusoidal components per channel
+    const a     = AMP / N;
+    const BAMP  = totalAmp * 0.4;  // low-frequency block-bias share
+    const BCOLS = 8, BROWS = 8;    // coarse grid, distinct from both the sinusoid
+                                    // period and the visible noise-cell grid
+
+    // != null (not truthy): an empty string is a valid "on, but no content"
+    // message and must still embed a well-defined (all-zero) bit pattern —
+    // otherwise decode has nothing to distinguish from the other overlay
+    // layers' unrelated signal and reads back noise instead of "no message".
+    const msgBits  = message != null ? textToBits(message) : null;
+    const msgBlockW = Math.ceil(w / MSG_GRID), msgBlockH = Math.ceil(h / MSG_GRID);
+
+    // OCR-readable text mask: independent of msgChk/message — uses the same
+    // text field, but is its own separately-toggled layer.
+    const ocrAmp  = (ocrDarkChk.checked ? -1 : 1) * +ocrAmpS.value;
+    const ocrMask = (ocrChk.checked && msgText.value) ? renderTextBiasMask(msgText.value, w, h) : null;
+
+    for (let ch = 0; ch < 3; ch++) {
+      if (includeHF) {
+        for (let k = 0; k < N; k++) {
+          const period = 2 + rand() * 3;          // 2–5 px period (high frequency)
+          const freq   = 1 / period;
+          const angle  = rand() * Math.PI;        // random orientation
+          const phase  = rand() * Math.PI * 2;
+          const cx     = Math.cos(angle);
+          const cy     = Math.sin(angle);
+          const TWO_PI_F = 2 * Math.PI * freq;
+
+          for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              overlay[(y * w + x) * 3 + ch] += a * Math.sin(TWO_PI_F * (x * cx + y * cy) + phase);
+            }
+          }
+        }
+      }
+
+      // Low-frequency block bias: fixed offset per coarse block
+      if (includeGrid) {
+        const blockW = Math.ceil(w / BCOLS), blockH = Math.ceil(h / BROWS);
+        for (let by = 0; by < BROWS; by++) {
+          for (let bx = 0; bx < BCOLS; bx++) {
+            const bias = (rand() * 2 - 1) * BAMP;
+            const x0 = bx * blockW, x1 = Math.min(w, x0 + blockW);
+            const y0 = by * blockH, y1 = Math.min(h, y0 + blockH);
+            for (let y = y0; y < y1; y++) {
+              for (let x = x0; x < x1; x++) {
+                overlay[(y * w + x) * 3 + ch] += bias;
+              }
+            }
+          }
+        }
+      }
+
+      // Hidden message: same sign/magnitude on every channel (unlike the
+      // random per-channel block bias above) so decode can sum all three
+      // channels for a stronger signal. Manchester-coded (see msgSlotAt):
+      // half 0 carries the bit, half 1 carries its complement, so each bit's
+      // pair sums to zero regardless of the message's own 1/0 balance.
+      if (msgBits) {
+        for (let by = 0; by < MSG_GRID; by++) {
+          for (let bx = 0; bx < MSG_GRID; bx++) {
+            const { bitIndex, half } = msgSlotAt(by, bx);
+            const bit = msgBits[bitIndex];
+            const carries1 = half === 0 ? bit : (1 - bit);
+            const bias = (carries1 ? 1 : -1) * MSG_AMP;
+            const x0 = bx * msgBlockW, x1 = Math.min(w, x0 + msgBlockW);
+            const y0 = by * msgBlockH, y1 = Math.min(h, y0 + msgBlockH);
+            for (let y = y0; y < y1; y++) {
+              for (let x = x0; x < x1; x++) {
+                overlay[(y * w + x) * 3 + ch] += bias;
+              }
+            }
+          }
+        }
+      }
+
+      // OCR-readable text: same sign on every channel (a plain brightness
+      // shift, not a color shift, reads most naturally as faint text).
+      if (ocrMask) {
+        for (let i = 0; i < w * h; i++) {
+          if (ocrMask[i] > 0) overlay[i * 3 + ch] += ocrMask[i] * ocrAmp;
+        }
+      }
+
+      // Remove residual DC so spatial mean is exactly zero
+      let sum = 0;
+      for (let i = ch; i < overlay.length; i += 3) sum += overlay[i];
+      const mean = sum / (w * h);
+      for (let i = ch; i < overlay.length; i += 3) overlay[i] -= mean;
+    }
+
+    return overlay;
+  }
+
+  function currentMessage() { return msgChk.checked ? msgText.value : null; }
+
+  function regenerateOverlay() {
+    if (!origCanvas) return;
+    const pixels = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH).data;
+    fixedOverlay = generateOverlay(pixels, imgW, imgH, +mlAmpS.value, currentMessage(), mlGuardHF.checked, mlGuardGrid.checked);
+  }
+
+  // ── File loading ───────────────────────────────────────────────────────────
+  dz.addEventListener('click',    e => { if (!e.target.matches('input')) fileIn.click(); });
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+  dz.addEventListener('dragleave',e => { if (!dz.contains(e.relatedTarget)) dz.classList.remove('over'); });
+  dz.addEventListener('drop',     e => {
+    e.preventDefault(); dz.classList.remove('over');
+    const f = e.dataTransfer.files[0];
+    if (f && (f.type.startsWith('image/') || f.type.startsWith('video/'))) loadFile(f);
+  });
+  fileIn.addEventListener('change', () => { if (fileIn.files[0]) loadFile(fileIn.files[0]); });
+
+  function loadFile(file) {
+    stopAll();
+    orientRotation = 0; orientFlipH = false; orientFlipV = false;
+    if (file.type.startsWith('video/')) loadVideoFile(file);
+    else loadImageFile(file);
+  }
+
+  function loadImageFile(file) {
+    setStatus('読み込み中...');
+    loadedVideo = null;
+    document.getElementById('videoModeNotice').style.display = 'none';
+    setVideoModeRestrictions(false);
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const url = ev.target.result;
+      dzThumb.src = url; dzThumb.style.display = 'block';
+      dzName.textContent = file.name; dzName.style.display = 'block';
+      const img = new Image();
+      img.onload = () => {
+        loadedImg = img; loadedName = file.name;
+        document.getElementById('orientControls').style.display = 'block';
+        updateOrientResetBtn();
+        processImage(img, file.name);
+      };
+      img.src = url;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ── Video loading ────────────────────────────────────────────────────────
+  // Preview only ever shows frame 0 (treated exactly like a still image via
+  // processImage — a <video> element works with drawImage/naturalWidth-style
+  // sizing the same as <img>, see getMediaWidth/getMediaHeight). The other
+  // frames only get visited during export, in prepareVideoFrame().
+  let videoDuration = 0;
+
+  function setVideoModeRestrictions(isVideo) {
+    detailChk.disabled = isVideo;
+    if (isVideo && detailChk.checked) {
+      detailChk.checked = false;
+      document.getElementById('detailField').style.display = 'none';
+    }
+    const webmOpt = document.querySelector('#formatSel option[value="webm"]');
+    webmOpt.disabled = isVideo;
+    if (isVideo && document.getElementById('formatSel').value === 'webm') {
+      document.getElementById('formatSel').value = 'mp4';
+    }
+  }
+
+  function loadVideoFile(file) {
+    setStatus('動画を読み込み中...');
+    loadedImg = null;
+    dzThumb.style.display = 'none';
+    dzName.textContent = file.name; dzName.style.display = 'block';
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.onerror = () => setStatus('動画の読み込みに失敗しました');
+    video.onloadedmetadata = () => { video.currentTime = 0; };
+    video.onseeked = () => {
+      loadedVideo = video; loadedName = file.name;
+      videoDuration = video.duration || 0;
+      setVideoModeRestrictions(true);
+      document.getElementById('orientControls').style.display = 'block';
+      document.getElementById('videoModeNotice').style.display = 'block';
+      document.getElementById('videoModeInfo').textContent =
+        `${video.videoWidth}×${video.videoHeight}, ${videoDuration.toFixed(1)}秒`;
+      const durIn = document.getElementById('durIn');
+      const maxDur = Math.max(1, Math.floor(videoDuration));
+      durIn.max = maxDur;
+      if (+durIn.value > maxDur) durIn.value = maxDur;
+      updateOrientResetBtn();
+      processImage(video, file.name);
+      dzThumb.src = canvas.toDataURL('image/png'); dzThumb.style.display = 'block';
+    };
+    video.src = URL.createObjectURL(file);
+  }
+
+  function updateOrientResetBtn() {
+    document.getElementById('resetOrientBtn').disabled =
+      orientRotation === 0 && !orientFlipH && !orientFlipV;
+  }
+
+  function reprocessWithOrientation() {
+    const src = loadedVideo || loadedImg;
+    if (!src) return;
+    stopAll();
+    regionPoints = []; regionPolygons = []; regionMask = null; // old coords no longer valid
+    updateOrientResetBtn();
+    processImage(src, loadedName);
+  }
+
+  document.getElementById('rotateLeftBtn').addEventListener('click', () => {
+    orientRotation = (orientRotation + 270) % 360;
+    reprocessWithOrientation();
+  });
+  document.getElementById('rotateRightBtn').addEventListener('click', () => {
+    orientRotation = (orientRotation + 90) % 360;
+    reprocessWithOrientation();
+  });
+  document.getElementById('flipHBtn').addEventListener('click', () => {
+    orientFlipH = !orientFlipH;
+    reprocessWithOrientation();
+  });
+  document.getElementById('flipVBtn').addEventListener('click', () => {
+    orientFlipV = !orientFlipV;
+    reprocessWithOrientation();
+  });
+  document.getElementById('resetOrientBtn').addEventListener('click', () => {
+    orientRotation = 0; orientFlipH = false; orientFlipV = false;
+    reprocessWithOrientation();
+  });
+
+  // ── Image processing ──────────────────────────────────────────────────────
+  // A <video> element exposes videoWidth/videoHeight instead of img's
+  // naturalWidth/naturalHeight; everything else here (drawImage, etc.) works
+  // identically on both, so this one lookup is the only thing that needs to
+  // branch on media type.
+  function mediaNaturalWidth(src)  { return src.videoWidth  || src.naturalWidth; }
+  function mediaNaturalHeight(src) { return src.videoHeight || src.naturalHeight; }
+
+  // Shared by processImage (initial load) and prepareVideoFrame (per export
+  // frame) so the two never drift out of sync on how HSL gets computed.
+  function computeHslBuf(pixels, w, h) {
+    const buf = new Float32Array(w * h * 3);
+    for (let i = 0; i < w * h; i++) {
+      const [hv, sv, lv] = rgbToHsl(
+        pixels[i * 4]     / 255,
+        pixels[i * 4 + 1] / 255,
+        pixels[i * 4 + 2] / 255
+      );
+      buf[i * 3]     = hv;
+      buf[i * 3 + 1] = sv;
+      buf[i * 3 + 2] = lv;
+    }
+    return buf;
+  }
+
+  function processImage(img, name) {
+    const rotated = orientRotation === 90 || orientRotation === 270;
+    let w = rotated ? mediaNaturalHeight(img) : mediaNaturalWidth(img);
+    let h = rotated ? mediaNaturalWidth(img)  : mediaNaturalHeight(img);
+    // Scale down if too wide
+    if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
+    // Snap to COLS/ROWS multiples so cells align perfectly
+    w = Math.max(COLS, Math.round(w / COLS) * COLS);
+    h = Math.max(ROWS, Math.round(h / ROWS) * ROWS);
+    imgW = w; imgH = h;
+
+    canvas.width = w; canvas.height = h;
+
+    // Store scaled + oriented original in an offscreen canvas. Rotation/flip
+    // happen here, once, so every downstream buffer (hslBuf, fixedOverlay,
+    // cellBnds, ...) is built directly from the already-oriented image and
+    // none of that code needs to know orientation exists.
+    origCanvas = document.createElement('canvas');
+    origCanvas.width = w; origCanvas.height = h;
+    const oc = origCanvas.getContext('2d');
+    oc.save();
+    oc.translate(w / 2, h / 2);
+    // Flip before rotate: canvas transforms apply to the drawn image
+    // innermost-call-first, so a scale() called after rotate() would mirror
+    // the source image before it gets rotated — meaning "flip horizontal"
+    // would visibly swap a different axis once a 90/270 rotation is also
+    // active, not the left-right the button currently shows. Scaling first
+    // (outermost) mirrors the already-rotated result instead, so the flip
+    // buttons always act on what's currently on screen.
+    oc.scale(orientFlipH ? -1 : 1, orientFlipV ? -1 : 1);
+    oc.rotate(orientRotation * Math.PI / 180);
+    const dw = rotated ? h : w, dh = rotated ? w : h; // pre-rotation draw size
+    oc.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    oc.restore();
+
+    // Convert every pixel to HSL and store in hslBuf
+    const pixels = oc.getImageData(0, 0, w, h).data;
+    hslBuf = computeHslBuf(pixels, w, h);
+
+    // Fixed adversarial overlay (image-specific, survives frame averaging)
+    fixedOverlay = generateOverlay(pixels, w, h, +mlAmpS.value, currentMessage(), mlGuardHF.checked, mlGuardGrid.checked);
+    blurOffscreen = document.createElement('canvas');
+    blurOffscreen.width = w; blurOffscreen.height = h;
+    blurOCtx = blurOffscreen.getContext('2d');
+
+    // Reusable output buffer (alpha always 255)
+    outBuf = new Uint8ClampedArray(w * h * 4);
+    for (let i = 3; i < outBuf.length; i += 4) outBuf[i] = 255;
+    imgDataObj = new ImageData(outBuf, w, h);
+
+    // Pre-compute pixel extents for every cell
+    const cellW = w / COLS, cellH = h / ROWS;
+    cellBnds = new Array(ROWS * COLS);
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const x  = Math.round(col * cellW);
+        const y  = Math.round(row * cellH);
+        const cw = Math.round((col + 1) * cellW) - x;
+        const ch = Math.round((row + 1) * cellH) - y;
+        cellBnds[row * COLS + col] = { x, y, cw, ch };
+      }
+    }
+
+    canvas.style.display = 'block';
+    syncCanvasSize();
+    emptyMsg.style.display = 'none';
+    drawOriginal();
+    playBtn.disabled = false;
+    expBtn.disabled  = false;
+    document.getElementById('avgTestBtn').disabled = false;
+    document.getElementById('avgResult').style.display = 'none';
+    setStatus(`読み込み完了: ${name}  (${imgW} × ${imgH})`);
+    computeImageStats();
+    if (detailChk.checked) decompose();
+    updateMLResistance();
+    if (origCanvas) origImageData = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH);
+    document.getElementById('regionControls').style.display = 'flex';
+    syncOverlaySize();
+  }
+
+  // ── Video export: per-frame source refresh ─────────────────────────────
+  // Waits for the browser to actually decode/present the frame at timeSec
+  // before resolving — a bare `currentTime =` assignment is async and the
+  // frame isn't ready until 'seeked' fires.
+  function seekVideoFrame(video, timeSec) {
+    return new Promise(resolve => {
+      const clamped = Math.min(Math.max(0, timeSec), Math.max(0, video.duration - 0.001));
+      function onSeeked() {
+        video.removeEventListener('seeked', onSeeked);
+        resolve();
+      }
+      video.addEventListener('seeked', onSeeked);
+      video.currentTime = clamped;
+    });
+  }
+
+  // Refreshes hslBuf/origImageData from the video frame at timeSec, reusing
+  // imgW/imgH/orientation as already established by the initial
+  // processImage() call — only the pixel *content* changes frame to frame,
+  // not the dimensions. fixedOverlay is deliberately NOT regenerated here:
+  // it stays the one pattern computed from frame 0 for the whole export (see
+  // plan notes — recomputing per frame would be correct too, but multiplies
+  // an already-expensive nested-loop computation by the frame count).
+  async function prepareVideoFrame(timeSec) {
+    await seekVideoFrame(loadedVideo, timeSec);
+    const w = imgW, h = imgH;
+    const rotated = orientRotation === 90 || orientRotation === 270;
+    const oc = origCanvas.getContext('2d');
+    oc.save();
+    oc.translate(w / 2, h / 2);
+    oc.scale(orientFlipH ? -1 : 1, orientFlipV ? -1 : 1);
+    oc.rotate(orientRotation * Math.PI / 180);
+    const dw = rotated ? h : w, dh = rotated ? w : h;
+    oc.drawImage(loadedVideo, -dw / 2, -dh / 2, dw, dh);
+    oc.restore();
+    const pixels = oc.getImageData(0, 0, w, h).data;
+    hslBuf = computeHslBuf(pixels, w, h);
+    origImageData = new ImageData(pixels, w, h);
+  }
+
+  function computeImageStats() {
+    if (!origCanvas) return;
+    const w = imgW, h = imgH;
+    const pixels = origCanvas.getContext('2d').getImageData(0, 0, w, h).data;
+    const N = w * h;
+    let sum = 0, sumSq = 0;
+    for (let i = 0; i < N; i++) {
+      const r = pixels[i*4], g = pixels[i*4+1], b = pixels[i*4+2];
+      sum   += r + g + b;
+      sumSq += r*r + g*g + b*b;
+    }
+    const mean = sum / (N * 3);
+    imageVar = Math.max(1, sumSq / (N * 3) - mean * mean);
+    let gradSum = 0;
+    for (let y = 1; y < h-1; y++) {
+      for (let x = 1; x < w-1; x++) {
+        const gx = (pixels[(y*w+x+1)*4+1] - pixels[(y*w+x-1)*4+1]) * 0.5;
+        const gy = (pixels[((y+1)*w+x)*4+1] - pixels[((y-1)*w+x)*4+1]) * 0.5;
+        gradSum += gx*gx + gy*gy;
+      }
+    }
+    imageGradVar = gradSum / ((w-2)*(h-2));
+  }
+
+  function updateMLResistance() {
+    const el = document.getElementById('mlStats');
+    if (!el || !hslBuf || imageVar === 0) return;
+    const chromaAmp = +hueS.value / 180 * 128;
+    const dL = +litS.value;
+    const dS = +satS.value;
+    const warpR = document.getElementById('warpChk').checked ? +warpS.value : 0;
+    const nChroma = chromaAmp * chromaAmp * 0.5;
+    const nLight  = Math.pow(dL / 100 * 255, 2) / 3;
+    const nSat    = Math.pow(dS / 100 * 255 * 0.4, 2) / 3;
+    const nWarp   = imageGradVar * warpR * warpR / 3;
+    const mlAmp   = +mlAmpS.value;
+    // Weighted by each layer's share of the amplitude budget in
+    // generateOverlay (0.6 high-freq / 0.4 grid), so ticking just one gives
+    // a proportionally smaller estimate than both together.
+    const mlActiveFrac = (mlGuardHF.checked ? 0.6 : 0) + (mlGuardGrid.checked ? 0.4 : 0);
+    const nML     = mlAmp * mlAmp * 0.5 * mlActiveFrac;
+    const baseNoise = nChroma + nLight + nSat + nWarp + nML;
+    // Enhanced mode: irregular boundaries + periodic regeneration bonus
+    const morphInterval = +morphS.value;
+    const nVoronoi = voronoiChk.checked
+      ? baseNoise * (0.15 + 0.25 * (1 - (morphInterval - 1) / 119))
+      : 0;
+    // Detail mode: edge layer brightness variation
+    const edgeBright = detailChk.checked ? +edgeBrightS.value : 0;
+    const sepRadius  = detailChk.checked ? +sepS.value : 0;
+    const nDetail = Math.pow(edgeBright / 100 * Math.sqrt(imageGradVar) * sepRadius / 10, 2);
+    const noiseVar = baseNoise + nVoronoi + nDetail;
+    const noisePct = Math.min(99, Math.sqrt(noiseVar) / 255 * 100);
+    const featPct  = Math.min(99, noiseVar / (imageVar + noiseVar) * 100);
+    document.getElementById('mlNoise').textContent    = noisePct.toFixed(1) + '%';
+    document.getElementById('mlFeat').textContent     = featPct.toFixed(1)  + '%';
+    document.getElementById('mlNoiseBar').style.width = noisePct + '%';
+    document.getElementById('mlFeatBar').style.width  = featPct  + '%';
+    const mult = featPct >= 99 ? 99 : 1 / (1 - featPct / 100);
+    document.getElementById('mlMult').textContent     = (mult >= 10 ? '×' + mult.toFixed(0) : '×' + mult.toFixed(1));
+    document.getElementById('mlMultBar').style.width  = Math.min(100, (mult - 1) / 9 * 100) + '%';
+    el.style.display = 'block';
+  }
+
+  // ── Frame-averaging attack test ──────────────────────────────────────────
+  // Renders N noise frames exactly as playback would, mean-stacks them (the
+  // simplest possible reconstruction attack a scraper script could run), and
+  // measures how close the result gets to the original image.
+  const avgNS = document.getElementById('avgNS');
+  avgNS.addEventListener('input', () => { document.getElementById('avgNV').textContent = avgNS.value; });
+
+  function runAveragingTest() {
+    if (!hslBuf || !origCanvas) return;
+    stopPlay();
+    const w = imgW, h = imgH;
+    const n = +avgNS.value;
+    const sum = new Float64Array(w * h * 3);
+    // Matches the export loops' timing convention (f / fps, using the preview
+    // FPS setting as the assumed playback rate) so this test reflects what an
+    // attacker averaging real captured frames would actually see, including
+    // the screensaver's motion smear if enabled.
+    const sswFps = Math.max(1, parseInt(document.getElementById('previewFps').value) || 60);
+
+    for (let f = 0; f < n; f++) {
+      if (cycleN >= 2) cycleFrame = f % cycleN;
+      drawNoise();
+      if (sswChk.checked) applyScreensaver(f / sswFps);
+      const frame = ctx.getImageData(0, 0, w, h).data;
+      for (let i = 0, p = 0; i < w * h; i++, p += 4) {
+        const s = i * 3;
+        sum[s]     += frame[p];
+        sum[s + 1] += frame[p + 1];
+        sum[s + 2] += frame[p + 2];
+      }
+    }
+
+    const origPixels = origCanvas.getContext('2d').getImageData(0, 0, w, h).data;
+    const avgData = new Uint8ClampedArray(w * h * 4);
+    let sqErr = 0, absErr = 0;
+    for (let i = 0, p = 0; i < w * h; i++, p += 4) {
+      const s = i * 3;
+      const rA = sum[s] / n, gA = sum[s + 1] / n, bA = sum[s + 2] / n;
+      avgData[p] = rA; avgData[p + 1] = gA; avgData[p + 2] = bA; avgData[p + 3] = 255;
+      const dr = rA - origPixels[p], dg = gA - origPixels[p + 1], db = bA - origPixels[p + 2];
+      sqErr  += dr * dr + dg * dg + db * db;
+      absErr += Math.abs(dr) + Math.abs(dg) + Math.abs(db);
+    }
+    const mse  = sqErr / (w * h * 3);
+    const mae  = absErr / (w * h * 3);
+    const psnr = mse > 0 ? 10 * Math.log10(255 * 255 / mse) : Infinity;
+
+    const origC = document.getElementById('avgOrigCanvas');
+    origC.width = w; origC.height = h;
+    origC.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(origPixels), w, h), 0, 0);
+
+    const resC = document.getElementById('avgResCanvas');
+    resC.width = w; resC.height = h;
+    resC.getContext('2d').putImageData(new ImageData(avgData, w, h), 0, 0);
+
+    document.getElementById('avgMAE').textContent  = mae.toFixed(2) + ' / 255';
+    document.getElementById('avgPSNR').textContent = isFinite(psnr) ? psnr.toFixed(1) + ' dB' : '∞';
+    let verdict;
+    if      (mae < 1) verdict = '⚠ ほぼ完全に復元される';
+    else if (mae < 3) verdict = '△ わずかな痕跡のみで復元される';
+    else if (mae < 8) verdict = '○ 目視ではやや残るが復元は容易';
+    else               verdict = '◎ 復元は強く阻害されている';
+    const mlGuardLabel = (mlGuardHF.checked || mlGuardGrid.checked)
+      ? `高周波${mlGuardHF.checked ? 'ON' : 'OFF'}/格子${mlGuardGrid.checked ? 'ON' : 'OFF'} strength=${mlAmpS.value}`
+      : 'OFF';
+    document.getElementById('avgVerdict').textContent =
+      `${verdict}（ML保護: ${mlGuardLabel}）`;
+
+    const msgEl = document.getElementById('avgMsg');
+    if (msgChk.checked) {
+      const decoded = decodeMessage(avgData, origPixels, w, h);
+      msgEl.textContent = decoded ? `"${decoded}"` : '(復元できず — 強度や再生フレーム数を上げてみてください)';
+    } else {
+      msgEl.textContent = '(埋め込みOFF)';
+    }
+
+    document.getElementById('avgResult').style.display = 'block';
+
+    drawNoise();
+    if (sswChk.checked && !drawMode) applyScreensaver(0);
+  }
+
+  const avgTestBtn = document.getElementById('avgTestBtn');
+  const AVG_TEST_LABEL_IDLE = '検証実行';
+  const AVG_TEST_LABEL_BUSY = '検証実行（処理中）';
+  avgTestBtn.addEventListener('click', () => {
+    avgTestBtn.disabled = true;
+    avgTestBtn.textContent = AVG_TEST_LABEL_BUSY;
+    // Defer the heavy synchronous loop one tick so the browser can paint
+    // the "処理中" label before the frame-averaging work blocks the thread.
+    setTimeout(() => {
+      try {
+        runAveragingTest();
+      } finally {
+        avgTestBtn.textContent = AVG_TEST_LABEL_IDLE;
+        avgTestBtn.disabled = !hslBuf;
+      }
+    }, 0);
+  });
+
+  // ── Adversarial Noise (PGD) ──────────────────────────────────────────────
+  document.getElementById('advChk').addEventListener('change', () => {
+    document.getElementById('advField').style.display =
+      document.getElementById('advChk').checked ? 'block' : 'none';
+  });
+  document.getElementById('advEpsS').addEventListener('input', () => {
+    document.getElementById('advEpsV').textContent = document.getElementById('advEpsS').value;
+  });
+  document.getElementById('advStepsS').addEventListener('input', () => {
+    document.getElementById('advStepsV').textContent = document.getElementById('advStepsS').value;
+  });
+  document.getElementById('loadModelBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('loadModelBtn');
+    const st  = document.getElementById('modelStatus');
+    btn.disabled = true;
+    st.textContent = '…';
+    try {
+      advMNInstance = await mobilenet.load({ version: 2, alpha: 1.0 });
+      advModelReady = true;
+      st.style.color = 'var(--accent)';
+      st.textContent = '✓ Ready';
+    } catch(e) {
+      st.textContent = 'Failed: ' + e.message;
+    }
+    btn.disabled = false;
+  });
+
+  async function applyPGD(epsilon, numSteps) {
+    if (!advMNInstance || !advModelReady) return;
+    const W = imgW, H = imgH;
+    const alpha = epsilon * 2 / numSteps;
+    const NUM_CLASSES = 1000;
+
+    const origTensor = tf.browser.fromPixels(canvas).toFloat().div(255).expandDims(0);
+
+    // Determine target class from current frame
+    const smallForClass = tf.image.resizeBilinear(origTensor, [224, 224]);
+    let rawOut;
+    try { rawOut = advMNInstance.model.predict(smallForClass); }
+    catch(_) { rawOut = advMNInstance.model.execute(smallForClass); }
+    const targetClass = (await rawOut.squeeze().argMax().array()) | 0;
+    tf.dispose([smallForClass, rawOut]);
+
+    // Random start within epsilon ball
+    let adv = tf.tidy(() =>
+      origTensor.add(tf.randomUniform(origTensor.shape, -epsilon, epsilon)).clipByValue(0, 1)
+    );
+
+    // PGD: gradient ascent projected onto epsilon ball
+    for (let s = 0; s < numSteps; s++) {
+      const newAdv = tf.tidy(() => {
+        const gradFn = tf.grad(x => {
+          const xSmall = tf.image.resizeBilinear(x, [224, 224]);
+          let logits;
+          try { logits = advMNInstance.model.predict(xSmall); }
+          catch(_) { logits = advMNInstance.model.execute(xSmall); }
+          const logitVec = logits.squeeze().slice([0], [NUM_CLASSES]);
+          const oneHot = tf.oneHot(tf.tensor1d([targetClass], 'int32'), NUM_CLASSES).squeeze();
+          return tf.losses.softmaxCrossEntropy(oneHot, logitVec).mean();
+        });
+        const grad    = gradFn(adv);
+        const stepped = adv.add(grad.sign().mul(alpha));
+        const delta   = stepped.sub(origTensor).clipByValue(-epsilon, epsilon);
+        return origTensor.add(delta).clipByValue(0, 1);
+      });
+      adv.dispose();
+      adv = newAdv;
+      await tf.nextFrame();
+    }
+
+    // Write back to canvas
+    const outPixels = await tf.browser.toPixels(adv.squeeze());
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(outPixels), W, H), 0, 0);
+    tf.dispose([origTensor, adv]);
+  }
+
+  function regenerateBaseAngles() {
+    const N = ROWS * COLS;
+    _cbTheta  = new Float32Array(N);
+    _cbDl     = new Float32Array(N);
+    _cbDs     = new Float32Array(N);
+    _cbWdx    = new Float32Array(N);
+    _cbWdy    = new Float32Array(N);
+    _cbBright = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      _cbTheta[i]  = Math.random() * 6.2831853;
+      _cbDl[i]     = Math.random() * 6.2831853;
+      _cbDs[i]     = Math.random() * 6.2831853;
+      _cbWdx[i]    = Math.random() * 6.2831853;
+      _cbWdy[i]    = Math.random() * 6.2831853;
+      _cbBright[i] = Math.random() * 6.2831853;
+    }
+  }
+
+  document.getElementById('cycleNS').addEventListener('input', () => {
+    cycleN = parseInt(document.getElementById('cycleNS').value) || 1;
+    const v = cycleN <= 1 ? '×1 (off)' : '×' + cycleN;
+    document.getElementById('cycleNV').textContent = v;
+    cycleFrame = 0;
+    if (cycleN >= 2) regenerateBaseAngles();
+    redrawIfStopped();
+  });
+
+  // ── Drawing ───────────────────────────────────────────────────────────────
+  function drawOriginal() {
+    if (origCanvas) ctx.drawImage(origCanvas, 0, 0);
+  }
+
+  function drawNoiseVoronoi() {
+    if (!hslBuf || !cellMap) return;
+    const N = COLS * ROWS;
+    const w = imgW, h = imgH;
+    const buf = hslBuf;
+    const out = outBuf;
+    const chromaAmp = +hueS.value / 180 * 128;
+    const dL = +litS.value;
+    const dS = +satS.value;
+    const warpOn = warpChk.checked;
+    const warpR  = warpOn ? +warpS.value : 0;
+    const isBlue = document.getElementById('noiseSel').value === 'blue';
+    const frameTheta = Math.random() * 6.2831853;
+
+    for (let ci = 0; ci < N; ci++) {
+      let theta, ds, dl;
+      if (cycleN >= 2 && _cbTheta) {
+        const ph = cycleFrame * 6.2831853 / cycleN;
+        theta = _cbTheta[ci] + ph;
+        dl    = Math.cos(_cbDl[ci]  + ph) * dL;
+        ds    = Math.cos(_cbDs[ci]  + ph) * dS;
+        _cWdx[ci] = warpOn ? Math.cos(_cbWdx[ci] + ph) * warpR : 0;
+        _cWdy[ci] = warpOn ? Math.cos(_cbWdy[ci] + ph) * warpR : 0;
+      } else if (isBlue) {
+        const checker = (((ci / COLS) | 0) + (ci % COLS)) & 1;
+        const phase = frameTheta + checker * 3.1415927;
+        const amp   = 0.5 + Math.random() * 0.5;
+        theta = phase + (Math.random() - 0.5) * 1.0472;
+        ds = Math.sin(phase) * dS * amp;
+        dl = Math.cos(phase) * dL * amp;
+        _cWdx[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        _cWdy[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+      } else {
+        theta = Math.random() * 6.2831853;
+        ds = (Math.random() * 2 - 1) * dS;
+        dl = (Math.random() * 2 - 1) * dL;
+        _cWdx[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        _cWdy[ci] = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+      }
+      const cosT = Math.cos(theta), sinT = Math.sin(theta);
+      _cCdR[ci] =  chromaAmp *  cosT;
+      _cCdG[ci] =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
+      _cCdB[ci] =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
+      _cDl[ci] = dl; _cDs[ci] = ds;
+    }
+
+    for (let py = 0; py < h; py++) {
+      const rowBase = py * w;
+      for (let px = 0; px < w; px++) {
+        const i  = rowBase + px;
+        const i4 = i * 4;
+        const ci = cellMap[i];
+
+        let i3;
+        if (warpOn) {
+          const sx = Math.min(w - 1, Math.max(0, (px + _cWdx[ci]) | 0));
+          const sy = Math.min(h - 1, Math.max(0, (py + _cWdy[ci]) | 0));
+          i3 = (sy * w + sx) * 3;
+        } else {
+          i3 = i * 3;
+        }
+
+        let sv = buf[i3 + 1] + _cDs[ci];
+        if (sv < 0) sv = 0; else if (sv > 100) sv = 100;
+        let lv = buf[i3 + 2] + _cDl[ci];
+        if (lv < 0) lv = 0; else if (lv > 100) lv = 100;
+
+        const hv = buf[i3];
+        const sn = sv / 100, ln = lv / 100;
+        const a  = sn * (ln < 0.5 ? ln : 1 - ln);
+        const h30 = hv / 30;
+        let k, t, u;
+
+        k = h30 % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let r = (ln - a * t) * 255;
+
+        k = (h30 + 8) % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let g = (ln - a * t) * 255;
+
+        k = (h30 + 4) % 12;
+        t = k-3; u = 9-k; if(u<t)t=u; if(t>1)t=1; if(t<-1)t=-1;
+        let b = (ln - a * t) * 255;
+
+        r += _cCdR[ci]; if(r<0)r=0; else if(r>255)r=255;
+        g += _cCdG[ci]; if(g<0)g=0; else if(g>255)g=255;
+        b += _cCdB[ci]; if(b<0)b=0; else if(b>255)b=255;
+
+        if (fixedOverlay) {
+          const oi = i * 3;
+          r += fixedOverlay[oi];     if(r<0)r=0; else if(r>255)r=255;
+          g += fixedOverlay[oi + 1]; if(g<0)g=0; else if(g>255)g=255;
+          b += fixedOverlay[oi + 2]; if(b<0)b=0; else if(b>255)b=255;
+        }
+
+        out[i4]     = r + 0.5 | 0;
+        out[i4 + 1] = g + 0.5 | 0;
+        out[i4 + 2] = b + 0.5 | 0;
+      }
+    }
+
+    ctx.putImageData(imgDataObj, 0, 0);
+
+    if (blurChk.checked && blurOffscreen) {
+      blurOCtx.filter = `blur(${blurS.value}px)`;
+      blurOCtx.drawImage(canvas, 0, 0);
+      ctx.drawImage(blurOffscreen, 0, 0);
+    }
+  }
+
+  function drawNoise() {
+    if (!hslBuf) return;
+    if (detailChk.checked && lowHslBuf) {
+      if (voronoiChk.checked && cellMap) { drawNoiseDetailVoronoi(); drawWatermark(); return; }
+      drawNoiseDetail(); drawWatermark(); return;
+    }
+    if (voronoiChk.checked) { drawNoiseVoronoi(); drawWatermark(); return; }
+    const dH  = +hueS.value;
+    const dL  = +litS.value;
+    const dS  = +satS.value;
+    const w   = imgW;
+    const h   = imgH;
+    const buf = hslBuf;
+    const out = outBuf;
+    const chromaAmp = dH / 180 * 128;
+    const warpOn  = warpChk.checked;
+    const warpR   = warpOn ? +warpS.value : 0;
+    const isBlue  = document.getElementById('noiseSel').value === 'blue';
+    const frameTheta = Math.random() * 6.2831853;
+
+    for (let ci = 0; ci < ROWS * COLS; ci++) {
+      const { x: cx, y: cy, cw, ch } = cellBnds[ci];
+
+      let theta, ds, dl, wdx, wdy;
+      if (cycleN >= 2 && _cbTheta) {
+        const ph = cycleFrame * 6.2831853 / cycleN;
+        theta = _cbTheta[ci] + ph;
+        dl    = Math.cos(_cbDl[ci]  + ph) * dL;
+        ds    = Math.cos(_cbDs[ci]  + ph) * dS;
+        wdx   = warpOn ? Math.cos(_cbWdx[ci] + ph) * warpR : 0;
+        wdy   = warpOn ? Math.cos(_cbWdy[ci] + ph) * warpR : 0;
+      } else if (isBlue) {
+        const checker = (((ci / COLS) | 0) + (ci % COLS)) & 1;
+        const phase   = frameTheta + checker * 3.1415927;
+        const amp     = 0.5 + Math.random() * 0.5;
+        theta = phase + (Math.random() - 0.5) * 1.0472;
+        ds    = Math.sin(phase) * dS * amp;
+        dl    = Math.cos(phase) * dL * amp;
+        wdx   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        wdy   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+      } else {
+        theta = Math.random() * 6.2831853;
+        ds    = (Math.random() * 2 - 1) * dS;
+        dl    = (Math.random() * 2 - 1) * dL;
+        wdx   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+        wdy   = warpOn ? (Math.random() * 2 - 1) * warpR : 0;
+      }
+
+      const cosT  = Math.cos(theta), sinT = Math.sin(theta);
+
+      const dR =  chromaAmp *  cosT;
+      const dG =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
+      const dB =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
+
+      for (let py = cy; py < cy + ch; py++) {
+        const rowBase = py * w;
+        for (let px = cx; px < cx + cw; px++) {
+          const i  = rowBase + px;
+          const i4 = i * 4;
+
+          // 変位後の参照座標（最近傍サンプリング）
+          let i3;
+          if (warpOn) {
+            const sx = Math.min(w - 1, Math.max(0, (px + wdx) | 0));
+            const sy = Math.min(h - 1, Math.max(0, (py + wdy) | 0));
+            i3 = (sy * w + sx) * 3;
+          } else {
+            i3 = i * 3;
+          }
+
+          let sv = buf[i3 + 1] + ds;
+          if (sv < 0) sv = 0; else if (sv > 100) sv = 100;
+
+          let lv = buf[i3 + 2] + dl;
+          if (lv < 0) lv = 0; else if (lv > 100) lv = 100;
+
+          const hv  = buf[i3];
+          const sn  = sv / 100, ln = lv / 100;
+          const a   = sn * (ln < 0.5 ? ln : 1 - ln);
+          const h30 = hv / 30;
+          let k, t, u;
+
+          k = h30 % 12;
+          t = k - 3; u = 9 - k; if (u < t) t = u; if (t > 1) t = 1; if (t < -1) t = -1;
+          let r = (ln - a * t) * 255;
+
+          k = (h30 + 8) % 12;
+          t = k - 3; u = 9 - k; if (u < t) t = u; if (t > 1) t = 1; if (t < -1) t = -1;
+          let g = (ln - a * t) * 255;
+
+          k = (h30 + 4) % 12;
+          t = k - 3; u = 9 - k; if (u < t) t = u; if (t > 1) t = 1; if (t < -1) t = -1;
+          let b = (ln - a * t) * 255;
+
+          r += dR; if (r < 0) r = 0; else if (r > 255) r = 255;
+          g += dG; if (g < 0) g = 0; else if (g > 255) g = 255;
+          b += dB; if (b < 0) b = 0; else if (b > 255) b = 255;
+
+          // Fixed adversarial overlay (元座標基準で重畳 → 時間平均で残る)
+          if (fixedOverlay) {
+            const oi = i * 3;
+            r += fixedOverlay[oi];     if (r < 0) r = 0; else if (r > 255) r = 255;
+            g += fixedOverlay[oi + 1]; if (g < 0) g = 0; else if (g > 255) g = 255;
+            b += fixedOverlay[oi + 2]; if (b < 0) b = 0; else if (b > 255) b = 255;
+          }
+
+          out[i4]     = r + 0.5 | 0;
+          out[i4 + 1] = g + 0.5 | 0;
+          out[i4 + 2] = b + 0.5 | 0;
+        }
+      }
+    }
+
+    ctx.putImageData(imgDataObj, 0, 0);
+
+    // ぼかし: オフスクリーンにblur付きで描いて主キャンバスに戻す
+    if (blurChk.checked && blurOffscreen) {
+      blurOCtx.filter = `blur(${blurS.value}px)`;
+      blurOCtx.drawImage(canvas, 0, 0);
+      ctx.drawImage(blurOffscreen, 0, 0);
+    }
+    drawWatermark();
+  }
+
+  function drawWatermark() {
+    if (!document.getElementById('watermarkChk').checked) return;
+    const text = '🚫 No AI Learning';
+    const fontSize = Math.max(11, Math.round(Math.min(imgW, imgH) * 0.028));
+    const pad = 7;
+    ctx.save();
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.textBaseline = 'bottom';
+    const tw = ctx.measureText(text).width;
+    const x = pad;
+    const y = imgH - pad;
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = '#111';
+    ctx.fillRect(x - 4, y - fontSize - 4, tw + 8, fontSize + 8);
+    ctx.globalAlpha = 1.0;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  }
+  document.getElementById('watermarkChk').addEventListener('change', redrawIfStopped);
+
+  // ── Region Selection (lasso) ─────────────────────────────────────────────
+  const overlay  = document.getElementById('regionOverlay');
+  const octx     = overlay.getContext('2d');
+  let regionPoints   = [];  // points of the polygon currently being drawn
+  let regionPolygons = [];  // completed polygons, kept so new strokes add to the selection instead of replacing it
+  let regionMask     = null;
+  let origImageData = null;
+  let isDrawing  = false;
+  let drawMode   = false;
+  let applyInside = false;
+  const _rgOff     = '✏ 範囲指定';
+  const _rgOn      = '✏ 描画中…';
+  const _rgOutside = '● 外側に適用';
+  const _rgInside  = '● 内側に適用';
+
+  function syncOverlaySize() {
+    overlay.width  = overlay.offsetWidth  || 1;
+    overlay.height = overlay.offsetHeight || 1;
+    drawRegionOverlay();
+  }
+
+  function overlayToImage(e) {
+    const cr = canvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(imgW, (e.clientX - cr.left) * imgW / cr.width)),
+      y: Math.max(0, Math.min(imgH, (e.clientY - cr.top)  * imgH / cr.height)),
+    };
+  }
+
+  function drawRegionOverlay() {
+    const ow = overlay.width, oh = overlay.height;
+    octx.clearRect(0, 0, ow, oh);
+    if (!drawMode) return;
+    const cr = canvas.getBoundingClientRect();
+    const or = overlay.getBoundingClientRect();
+    const sx = cr.width  / imgW * ow / or.width;
+    const sy = cr.height / imgH * oh / or.height;
+    const ox = (cr.left - or.left) * ow / or.width;
+    const oy = (cr.top  - or.top)  * oh / or.height;
+
+    function tracePath(points) {
+      octx.beginPath();
+      octx.moveTo(ox + points[0].x * sx, oy + points[0].y * sy);
+      for (let i = 1; i < points.length; i++) octx.lineTo(ox + points[i].x * sx, oy + points[i].y * sy);
+    }
+
+    // Already-completed regions: filled + outlined
+    if (regionPolygons.length) {
+      octx.fillStyle = applyInside ? 'rgba(60,255,120,0.15)' : 'rgba(255,140,0,0.12)';
+      octx.strokeStyle = '#ff0';
+      octx.lineWidth   = 1.5;
+      octx.setLineDash([5, 4]);
+      for (const poly of regionPolygons) {
+        tracePath(poly);
+        octx.closePath();
+        octx.fill();
+        octx.stroke();
+      }
+      octx.setLineDash([]);
+    }
+
+    // Polygon currently being drawn (outline only, no fill until closed)
+    if (regionPoints.length >= 2) {
+      tracePath(regionPoints);
+      if (!isDrawing) octx.closePath();
+      octx.strokeStyle = '#ff0';
+      octx.lineWidth   = 1.5;
+      octx.setLineDash([5, 4]);
+      octx.stroke();
+      octx.setLineDash([]);
+    }
+  }
+
+  function computeRegionMask() {
+    const off  = document.createElement('canvas');
+    off.width  = imgW; off.height = imgH;
+    const mc = off.getContext('2d');
+    mc.fillStyle = '#fff';
+    for (const poly of regionPolygons) {
+      mc.beginPath();
+      mc.moveTo(poly[0].x, poly[0].y);
+      for (let i = 1; i < poly.length; i++) mc.lineTo(poly[i].x, poly[i].y);
+      mc.closePath();
+      mc.fill();
+    }
+    const d = mc.getImageData(0, 0, imgW, imgH).data;
+    regionMask = new Uint8Array(imgW * imgH);
+    for (let i = 0; i < imgW * imgH; i++) regionMask[i] = d[i * 4] > 128 ? 1 : 0;
+  }
+
+  function applyRegionMask() {
+    if (!regionMask || !origImageData) return;
+    const imgd = ctx.getImageData(0, 0, imgW, imgH);
+    const nd = imgd.data, od = origImageData.data;
+    for (let i = 0; i < imgW * imgH; i++) {
+      const applyHere = applyInside ? regionMask[i] : !regionMask[i];
+      if (!applyHere) {
+        const i4 = i * 4;
+        nd[i4] = od[i4]; nd[i4+1] = od[i4+1]; nd[i4+2] = od[i4+2];
+      }
+    }
+    ctx.putImageData(imgd, 0, 0);
+  }
+
+  function startDraw(pos) {
+    if (!drawMode || !hslBuf) return;
+    // Note: regionPolygons/regionMask are intentionally left alone here, so
+    // starting a new stroke adds a region instead of replacing the existing
+    // selection — use the 消去 button to clear everything.
+    isDrawing = true; regionPoints = [pos];
+  }
+  function moveDraw(pos) {
+    if (!isDrawing) return;
+    const last = regionPoints[regionPoints.length - 1];
+    const dx = pos.x - last.x, dy = pos.y - last.y;
+    if (dx * dx + dy * dy > 9) regionPoints.push(pos);
+    drawRegionOverlay();
+  }
+  function endDraw() {
+    if (!isDrawing) return;
+    isDrawing = false;
+    if (regionPoints.length >= 6) {
+      regionPolygons.push(regionPoints);
+      regionPoints = [];
+      computeRegionMask();
+    } else {
+      regionPoints = [];
+    }
+    drawRegionOverlay();
+  }
+
+  overlay.addEventListener('mousedown', e => startDraw(overlayToImage(e)));
+  overlay.addEventListener('mousemove', e => moveDraw(overlayToImage(e)));
+  overlay.addEventListener('mouseup',   () => endDraw());
+
+  function touchPos(e) {
+    const t = e.touches[0] || e.changedTouches[0];
+    return overlayToImage({ clientX: t.clientX, clientY: t.clientY });
+  }
+  overlay.addEventListener('touchstart', e => { if (!drawMode) return; e.preventDefault(); startDraw(touchPos(e)); }, { passive: false });
+  overlay.addEventListener('touchmove',  e => { if (!isDrawing) return; e.preventDefault(); moveDraw(touchPos(e)); },  { passive: false });
+  overlay.addEventListener('touchend',   e => { e.preventDefault(); endDraw(); }, { passive: false });
+
+  document.getElementById('drawRegionBtn').addEventListener('click', () => {
+    drawMode = !drawMode;
+    const btn = document.getElementById('drawRegionBtn');
+    if (drawMode) {
+      btn.textContent = _rgOn;
+      btn.style.color = 'var(--accent)';
+      overlay.style.pointerEvents = 'auto';
+      overlay.style.cursor = 'crosshair';
+      if (playing) stopPlay();
+      // Region clicks are mapped to image coordinates assuming the canvas
+      // shows the image at full size (see overlayToImage) — force that here
+      // even if playback had frozen mid-shift, and disable the screensaver
+      // controls for the duration so a mid-edit settings change can't bring
+      // the shift back.
+      sswChk.disabled = true; sswPeriodS.disabled = true; sswScaleS.disabled = true;
+      if (hslBuf) { drawNoise(); applyRegionMask(); }
+    } else {
+      btn.textContent = _rgOff;
+      btn.style.color = '';
+      overlay.style.pointerEvents = 'none';
+      overlay.style.cursor = '';
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+      sswChk.disabled = false; sswPeriodS.disabled = false; sswScaleS.disabled = false;
+      redrawIfStopped();
+    }
+  });
+  document.getElementById('clearRegionBtn').addEventListener('click', () => {
+    regionPoints = []; regionPolygons = []; regionMask = null;
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    if (!playing && hslBuf) { drawNoise(); }
+  });
+  document.getElementById('applyModeBtn').addEventListener('click', () => {
+    applyInside = !applyInside;
+    document.getElementById('applyModeBtn').textContent = applyInside ? _rgInside : _rgOutside;
+    drawRegionOverlay();
+    if (!playing && hslBuf) { drawNoise(); applyRegionMask(); }
+  });
+
+  window.addEventListener('resize', syncOverlaySize);
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function setStatus(msg) { stEl.textContent = msg; }
+  function setBadge(text, cls) {
+    badge.className = 'badge ' + (cls || '');
+    badge.textContent = text;
+    badge.style.display = text ? 'block' : 'none';
+  }
+
+  // ── Preview animation ─────────────────────────────────────────────────────
+  let lastTs = 0;
+  function loop(ts) {
+    const fps = Math.max(1, parseInt(document.getElementById('previewFps').value) || 60);
+    if (ts - lastTs >= 1000 / fps) {
+      if (voronoiChk.checked) {
+        frameCount++;
+        const interval = Math.max(1, parseInt(morphS.value) || 10);
+        if (frameCount % interval === 0) regenerateSeeds();
+      }
+      if (cycleN >= 2) cycleFrame = (cycleFrame + 1) % cycleN;
+      drawNoise();
+      applyRegionMask();
+      if (sswChk.checked && !drawMode) {
+        if (sswStartTs === null) sswStartTs = ts;
+        applyScreensaver((ts - sswStartTs) / 1000);
+      }
+      drawRegionOverlay();
+      lastTs = ts;
+    }
+    animId = requestAnimationFrame(loop);
+  }
+
+  function startPlay() {
+    if (playing || exporting || !hslBuf) return;
+    playing = true;
+    lastTs = 0; frameCount = 0; cycleFrame = 0; sswStartTs = null;
+    if (cycleN >= 2) regenerateBaseAngles();
+    animId = requestAnimationFrame(loop);
+    playBtn.disabled  = true;
+    pauseBtn.disabled = false;
+    setBadge('▶ 再生中', 'playing');
+    setStatus('再生中… 止めると1フレームが見えます');
+  }
+
+  function stopPlay() {
+    playing = false;
+    if (animId) { cancelAnimationFrame(animId); animId = null; }
+    playBtn.disabled  = !hslBuf;
+    pauseBtn.disabled = true;
+    setBadge('');
+    setStatus('停止しました（最終フレームを表示）');
+  }
+
+  function stopAll() {
+    stopPlay();
+    if (expInterval) { clearInterval(expInterval); expInterval = null; }
+    exporting = false;
+    prog.style.display = 'none';
+    progFill.style.width = '0%';
+    expBtn.disabled = !hslBuf;
+  }
+
+  playBtn.addEventListener('click',  startPlay);
+  pauseBtn.addEventListener('click', stopPlay);
+
+  // ── Export helpers ────────────────────────────────────────────────────────
+  function exportDone(blob, ext, fps, dur) {
+    const url = URL.createObjectURL(blob);
+    const a   = Object.assign(document.createElement('a'), {
+      href: url, download: `grid-noise-${Date.now()}.${ext}`
+    });
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 2000);
+    prog.style.display = 'none'; progFill.style.width = '0%';
+    setBadge('');
+    playBtn.disabled = false; expBtn.disabled = false;
+    setStatus(`出力完了  ${(blob.size / 1048576).toFixed(1)} MB  (${fps} fps, ${dur} 秒)`);
+  }
+
+  // ── Export ────────────────────────────────────────────────────────────────
+  expBtn.addEventListener('click', async () => {
+    if (!hslBuf || exporting) return;
+    stopPlay();
+    cycleFrame = 0;
+    if (cycleN >= 2) regenerateBaseAngles();
+
+    const fps   = Math.max(1, parseInt(document.getElementById('fpsIn').value)  || 60);
+    const durCap = loadedVideo ? Math.min(120, Math.max(1, Math.floor(videoDuration))) : 120;
+    const dur   = Math.max(1, Math.min(durCap, parseInt(document.getElementById('durIn').value) || 5));
+    const total = fps * dur;
+    const fmt   = document.getElementById('formatSel').value;
+
+    exporting = true;
+    playBtn.disabled = true; pauseBtn.disabled = true; expBtn.disabled = true;
+    prog.style.display = 'block'; progFill.style.width = '0%';
+    setBadge('● REC', 'recording');
+    setStatus(`録画中… 0 / ${total} フレーム`);
+
+    if (fmt === 'gif') {
+      // ── GIF: 自前エンコーダー（外部依存なし）────────────────────────────
+      const gifFps   = Math.min(fps, 50);          // GIF 実用上限 50fps
+      const delayCs  = Math.max(2, Math.round(100 / gifFps));  // centiseconds
+      const gifTotal = Math.round(dur * gifFps);
+
+      setStatus('GIF パレット準備中...');
+      await new Promise(r => setTimeout(r, 0));
+      getGifLut();  // lazy LUT 構築（初回のみ ~50ms）
+
+      const frames = [];
+      (async () => {
+        for (let f = 0; f < gifTotal; f++) {
+          if (!exporting) return;
+          if (cycleN >= 2) cycleFrame = f % cycleN;
+          if (loadedVideo) await prepareVideoFrame(f / gifFps);
+          drawNoise();
+          applyRegionMask();
+          if (sswChk.checked) applyScreensaver(f / gifFps);
+          // ぼかし・スクリーンセイバー有効時はキャンバスから読み直す（変換後のピクセルを使う）
+          const src = (regionMask || (blurChk.checked && blurOffscreen) || sswChk.checked)
+            ? ctx.getImageData(0, 0, imgW, imgH).data
+            : outBuf;
+          frames.push(quantizeToGif(src));
+          progFill.style.width = ((f + 1) / gifTotal * 100).toFixed(1) + '%';
+          setStatus(`GIF 録画中… ${f + 1} / ${gifTotal} フレーム`);
+          if (f % 10 === 9) await new Promise(r => setTimeout(r, 0));
+        }
+        if (!exporting) return;
+        setStatus('GIF エンコード中...');
+        await new Promise(r => setTimeout(r, 0));
+        const data = buildGIF(imgW, imgH, frames, delayCs);
+        exporting = false;
+        exportDone(new Blob([data], { type: 'image/gif' }), 'gif', gifFps, dur);
+      })().catch(e => { stopAll(); setStatus('GIF エラー: ' + e.message); });
+
+    } else if (fmt === 'mp4') {
+      // ── MP4: WebCodecs (VideoEncoder) + mp4-muxer ────────────────────────
+      if (!window.VideoEncoder) {
+        stopAll();
+        setStatus('MP4出力はChrome / Edge / Safari 16.4以降が必要です');
+        return;
+      }
+      if (!window.Mp4Muxer) {
+        stopAll();
+        setStatus('mp4-muxer の読み込みに失敗しました（オフライン？）');
+        return;
+      }
+
+      // H.264コーデック候補を順に試す
+      const codecCandidates = ['avc1.42001f', 'avc1.4d0028', 'avc1.640028'];
+      let chosenCodec = null;
+      for (const c of codecCandidates) {
+        try {
+          const s = await VideoEncoder.isConfigSupported({ codec: c, width: imgW, height: imgH });
+          if (s.supported) { chosenCodec = c; break; }
+        } catch {}
+      }
+      if (!chosenCodec) {
+        stopAll(); setStatus('H.264エンコーダーが見つかりません'); return;
+      }
+
+      const { Muxer, ArrayBufferTarget } = window.Mp4Muxer;
+      const target = new ArrayBufferTarget();
+      const muxer  = new Muxer({
+        target,
+        video: { codec: 'avc', width: imgW, height: imgH },
+        fastStart: 'in-memory',
+      });
+
+      const encoder = new VideoEncoder({
+        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+        error:  (e) => { stopAll(); setStatus('エンコードエラー: ' + e.message); },
+      });
+      encoder.configure({
+        codec: chosenCodec, width: imgW, height: imgH,
+        bitrate: 8_000_000, framerate: fps,
+      });
+
+      (async () => {
+        for (let f = 0; f < total; f++) {
+          if (!exporting) { encoder.close(); return; }
+          if (cycleN >= 2) cycleFrame = f % cycleN;
+          if (loadedVideo) await prepareVideoFrame(f / fps);
+          drawNoise();
+          if (document.getElementById('advChk').checked && advModelReady) {
+            const eps  = +document.getElementById('advEpsS').value / 255;
+            const stps = +document.getElementById('advStepsS').value;
+            setStatus(`frame ${f + 1} / ${total}`);
+            await applyPGD(eps, stps);
+          }
+          applyRegionMask();
+          if (sswChk.checked) applyScreensaver(f / fps);
+          const vf = new VideoFrame(canvas, { timestamp: Math.round(f * 1e6 / fps) });
+          encoder.encode(vf, { keyFrame: f % 60 === 0 });
+          vf.close();
+          while (encoder.encodeQueueSize > 10) await new Promise(r => setTimeout(r, 5));
+          progFill.style.width = ((f + 1) / total * 100).toFixed(1) + '%';
+          setStatus(`MP4 録画中… ${f + 1} / ${total} フレーム`);
+          if (f % 5 === 4) await new Promise(r => setTimeout(r, 0));
+        }
+        if (!exporting) return;
+        await encoder.flush();
+        muxer.finalize();
+        exporting = false;
+        exportDone(new Blob([target.buffer], { type: 'video/mp4' }), 'mp4', fps, dur);
+      })().catch(e => { stopAll(); setStatus('MP4エラー: ' + e.message); });
+
+    } else {
+      // ── WebM: MediaRecorder ───────────────────────────────────────────────
+      const codecs = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+      const mime   = codecs.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
+
+      const stream   = canvas.captureStream(fps);
+      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
+      const chunks   = [];
+
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = () => {
+        clearInterval(expInterval); expInterval = null;
+        exporting = false;
+        exportDone(new Blob(chunks, { type: mime.split(';')[0] }), 'webm', fps, dur);
+      };
+      recorder.onerror = () => { stopAll(); setStatus('録画中にエラーが発生しました。'); };
+
+      recorder.start(200);
+      let frame = 0;
+      expInterval = setInterval(() => {
+        if (!exporting) { clearInterval(expInterval); return; }
+        drawNoise();
+        if (sswChk.checked) applyScreensaver(frame / fps);
+        frame++;
+        progFill.style.width = (frame / total * 100).toFixed(1) + '%';
+        setStatus(`WebM 録画中… ${frame} / ${total} フレーム  (${(frame / fps).toFixed(1)} 秒)`);
+        if (frame >= total) { clearInterval(expInterval); expInterval = null; recorder.stop(); }
+      }, 1000 / fps);
+    }
+  });
+
+})();
+</script>
+
+<footer style="text-align:center; padding:18px 0 14px; margin-top:10px;">
+  <img id="accessCounter" alt="アクセスカウンター" style="height:20px; vertical-align:middle; opacity:0; transition:opacity 0.3s;">
+</footer>
+<script>
+  (function () {
+    const img = document.getElementById('accessCounter');
+    // hits.seeyoufarm.com's badge API is dead (returns 404 as of 2026-07;
+    // the domain now just hosts an unrelated WordPress site), which is why
+    // this never showed up. hits.dwyl.com is a currently-working equivalent.
+    img.src = 'https://hits.dwyl.com/grid-noise-animator-app/ml_protect_test.html.svg?style=flat-square';
+    img.onload  = () => { img.style.opacity = '1'; };
+    img.onerror = () => { img.style.display = 'none'; };
+  })();
+</script>
+</body>
+</html>
