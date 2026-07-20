@@ -360,6 +360,19 @@
           <span>Watermark</span>
         </label>
       </div>
+      <div class="field" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="sswChk" style="width:14px;height:14px">
+          <span>Screensaver (test)</span>
+        </label>
+        <div id="sswField" style="display:none;margin-top:8px;">
+          <div class="field-label">Period <em id="sswPeriodV">8 sec</em></div>
+          <input type="range" id="sswPeriodS" min="3" max="30" value="8">
+          <div class="field-label" style="margin-top:6px;">Scale <em id="sswScaleV">85%</em></div>
+          <input type="range" id="sswScaleS" min="50" max="95" value="85">
+          <div style="font-size:0.68rem;color:#777;margin-top:4px;line-height:1.4;">Moves the whole image around like a DVD screensaver. It always returns exactly to the original (centered) position every cycle.</div>
+        </div>
+      </div>
     </div>
 
     <div class="card out-card">
@@ -605,7 +618,39 @@ function buildGIF(w, h, frames, delayCs) {
   const edgeBrightS   = document.getElementById('edgeBrightS');
   const reprocessBtn  = document.getElementById('reprocessBtn');
 
-  const redrawIfStopped = () => { if (!playing && hslBuf) drawNoise(); updateMLResistance(); };
+  const sswChk      = document.getElementById('sswChk');
+  const sswField    = document.getElementById('sswField');
+  const sswPeriodS  = document.getElementById('sswPeriodS');
+  const sswScaleS   = document.getElementById('sswScaleS');
+
+  const redrawIfStopped = () => {
+    if (!playing && hslBuf) {
+      drawNoise();
+      if (sswChk.checked && !drawMode) applyScreensaver(0);
+    }
+    updateMLResistance();
+  };
+
+  function syncDurToPeriod() {
+    const durInEl = document.getElementById('durIn');
+    const maxDur = +durInEl.max || 120;
+    durInEl.value = Math.min(+sswPeriodS.value, maxDur);
+  }
+
+  sswChk.addEventListener('change', () => {
+    sswField.style.display = sswChk.checked ? 'block' : 'none';
+    if (sswChk.checked) syncDurToPeriod();
+    redrawIfStopped();
+  });
+  sswPeriodS.addEventListener('input', () => {
+    document.getElementById('sswPeriodV').textContent = `${sswPeriodS.value} sec`;
+    if (sswChk.checked) syncDurToPeriod();
+    redrawIfStopped();
+  });
+  sswScaleS.addEventListener('input', () => {
+    document.getElementById('sswScaleV').textContent = sswScaleS.value + '%';
+    redrawIfStopped();
+  });
 
   blurS.addEventListener('input', () => { document.getElementById('blurV').textContent = blurS.value + 'px'; redrawIfStopped(); });
   warpS.addEventListener('input', () => { document.getElementById('warpV').textContent = warpS.value + 'px'; redrawIfStopped(); });
@@ -994,6 +1039,41 @@ function buildGIF(w, h, frames, delayCs) {
 
   let fixedOverlay = null;
   let blurOffscreen = null, blurOCtx = null;
+
+  // ── Screensaver mode (test) ──────────────────────────────────────────────
+  let sswStartTs = null;
+  let sswSnapshotCanvas = null;
+
+  function sswTriWave(t, P) {
+    const u = (((t % P) + P) % P) / P;
+    if (u < 0.25) return u * 4;
+    if (u < 0.75) return 2 - u * 4;
+    return u * 4 - 4;
+  }
+
+  function applyScreensaver(tSec) {
+    const period = Math.max(1, +sswPeriodS.value || 8);
+    const scale  = Math.min(0.98, Math.max(0.5, (+sswScaleS.value || 85) / 100));
+    const rx = imgW * (1 - scale) / 2;
+    const ry = imgH * (1 - scale) / 2;
+    const baseX = rx, baseY = ry;
+    const drawX = baseX + rx * sswTriWave(tSec, period / 3);
+    const drawY = baseY + ry * sswTriWave(tSec, period / 2);
+
+    if (!sswSnapshotCanvas) {
+      sswSnapshotCanvas = document.createElement('canvas');
+    }
+    if (sswSnapshotCanvas.width !== imgW || sswSnapshotCanvas.height !== imgH) {
+      sswSnapshotCanvas.width = imgW; sswSnapshotCanvas.height = imgH;
+    }
+    const sctx = sswSnapshotCanvas.getContext('2d');
+    sctx.clearRect(0, 0, imgW, imgH);
+    sctx.drawImage(canvas, 0, 0);
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, imgW, imgH);
+    ctx.drawImage(sswSnapshotCanvas, 0, 0, imgW, imgH, drawX, drawY, imgW * scale, imgH * scale);
+  }
 
   // ── Color math ────────────────────────────────────────────────────────────
   function rgbToHsl(r, g, b) {
@@ -1796,12 +1876,16 @@ function buildGIF(w, h, frames, delayCs) {
       overlay.style.pointerEvents = 'auto';
       overlay.style.cursor = 'crosshair';
       if (playing) stopPlay();
+      sswChk.disabled = true; sswPeriodS.disabled = true; sswScaleS.disabled = true;
+      if (hslBuf) { drawNoise(); applyRegionMask(); }
     } else {
       btn.textContent = _rgOff;
       btn.style.color = '';
       overlay.style.pointerEvents = 'none';
       overlay.style.cursor = '';
       octx.clearRect(0, 0, overlay.width, overlay.height);
+      sswChk.disabled = false; sswPeriodS.disabled = false; sswScaleS.disabled = false;
+      redrawIfStopped();
     }
   });
   document.getElementById('clearRegionBtn').addEventListener('click', () => {
@@ -1839,6 +1923,10 @@ function buildGIF(w, h, frames, delayCs) {
       if (cycleN >= 2) cycleFrame = (cycleFrame + 1) % cycleN;
       drawNoise();
       applyRegionMask();
+      if (sswChk.checked && !drawMode) {
+        if (sswStartTs === null) sswStartTs = ts;
+        applyScreensaver((ts - sswStartTs) / 1000);
+      }
       drawRegionOverlay();
       lastTs = ts;
     }
@@ -1848,7 +1936,7 @@ function buildGIF(w, h, frames, delayCs) {
   function startPlay() {
     if (playing || exporting || !hslBuf) return;
     playing = true;
-    lastTs = 0; frameCount = 0; cycleFrame = 0;
+    lastTs = 0; frameCount = 0; cycleFrame = 0; sswStartTs = null;
     if (cycleN >= 2) regenerateBaseAngles();
     animId = requestAnimationFrame(loop);
     playBtn.disabled  = true;
@@ -1928,7 +2016,8 @@ function buildGIF(w, h, frames, delayCs) {
           if (loadedVideo) await prepareVideoFrame(f / gifFps);
           drawNoise();
           applyRegionMask();
-          const src = (regionMask || (blurChk.checked && blurOffscreen))
+          if (sswChk.checked) applyScreensaver(f / gifFps);
+          const src = (regionMask || (blurChk.checked && blurOffscreen) || sswChk.checked)
             ? ctx.getImageData(0, 0, imgW, imgH).data
             : outBuf;
           frames.push(quantizeToGif(src));
@@ -1999,6 +2088,7 @@ function buildGIF(w, h, frames, delayCs) {
             await applyPGD(eps, stps);
           }
           applyRegionMask();
+          if (sswChk.checked) applyScreensaver(f / fps);
           const vf = new VideoFrame(canvas, { timestamp: Math.round(f * 1e6 / fps) });
           encoder.encode(vf, { keyFrame: f % 60 === 0 });
           vf.close();
@@ -2035,6 +2125,7 @@ function buildGIF(w, h, frames, delayCs) {
       expInterval = setInterval(() => {
         if (!exporting) { clearInterval(expInterval); return; }
         drawNoise();
+        if (sswChk.checked) applyScreensaver(frame / fps);
         frame++;
         progFill.style.width = (frame / total * 100).toFixed(1) + '%';
         setStatus(`Recording WebM… ${frame} / ${total} frames  (${(frame / fps).toFixed(1)} sec)`);

@@ -1061,6 +1061,19 @@
           <span>透かし</span>
         </label>
       </div>
+      <div class="field" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="sswChk" style="width:14px;height:14px">
+          <span>スクリーンセイバー（テスト）</span>
+        </label>
+        <div id="sswField" style="display:none;margin-top:8px;">
+          <div class="field-label">周期 <em id="sswPeriodV">8 秒</em></div>
+          <input type="range" id="sswPeriodS" min="3" max="30" value="8">
+          <div class="field-label" style="margin-top:6px;">縮小率 <em id="sswScaleV">85%</em></div>
+          <input type="range" id="sswScaleS" min="50" max="95" value="85">
+          <div style="font-size:0.68rem;color:#777;margin-top:4px;line-height:1.4;">画像全体をDVDスクリーンセイバー風に動かします。周期の秒数ごとに必ず元の位置（中央）に戻ります。</div>
+        </div>
+      </div>
     </div>
 
     <div class="card out-card">
@@ -1306,7 +1319,50 @@ function buildGIF(w, h, frames, delayCs) {
   const edgeBrightS   = document.getElementById('edgeBrightS');
   const reprocessBtn  = document.getElementById('reprocessBtn');
 
-  const redrawIfStopped = () => { if (!playing && hslBuf) drawNoise(); updateMLResistance(); };
+  const sswChk      = document.getElementById('sswChk');
+  const sswField    = document.getElementById('sswField');
+  const sswPeriodS  = document.getElementById('sswPeriodS');
+  const sswScaleS   = document.getElementById('sswScaleS');
+
+  // Screensaver shift is suppressed while drawMode is active: region-selection
+  // coordinates are recorded in original (full-size, unshifted) image space, so
+  // the displayed frame must stay full-size whenever the user might click to
+  // place a point — otherwise the guide the user sees and the mask that gets
+  // stored end up in different places. (drawMode is declared later in this
+  // file but already initialized by the time any of these callbacks run.)
+  const redrawIfStopped = () => {
+    if (!playing && hslBuf) {
+      drawNoise();
+      if (sswChk.checked && !drawMode) applyScreensaver(0);
+    }
+    updateMLResistance();
+  };
+
+  // Defaults the export duration to exactly one screensaver cycle, so a
+  // straight "export" click produces a video that loops seamlessly back to
+  // its starting frame. Only nudges durIn when screensaver is the one driving
+  // it (on enable, and while it stays checked as the period slider moves) —
+  // it never touches durIn while screensaver is off.
+  function syncDurToPeriod() {
+    const durInEl = document.getElementById('durIn');
+    const maxDur = +durInEl.max || 120;
+    durInEl.value = Math.min(+sswPeriodS.value, maxDur);
+  }
+
+  sswChk.addEventListener('change', () => {
+    sswField.style.display = sswChk.checked ? 'block' : 'none';
+    if (sswChk.checked) syncDurToPeriod();
+    redrawIfStopped();
+  });
+  sswPeriodS.addEventListener('input', () => {
+    document.getElementById('sswPeriodV').textContent = sswPeriodS.value + ' 秒';
+    if (sswChk.checked) syncDurToPeriod();
+    redrawIfStopped();
+  });
+  sswScaleS.addEventListener('input', () => {
+    document.getElementById('sswScaleV').textContent = sswScaleS.value + '%';
+    redrawIfStopped();
+  });
 
   blurS.addEventListener('input', () => { document.getElementById('blurV').textContent = blurS.value + 'px'; redrawIfStopped(); });
   warpS.addEventListener('input', () => { document.getElementById('warpV').textContent = warpS.value + 'px'; redrawIfStopped(); });
@@ -1695,6 +1751,48 @@ function buildGIF(w, h, frames, delayCs) {
 
   let fixedOverlay = null;  // Float32Array [r,g,b,...] fixed adversarial pattern per pixel
   let blurOffscreen = null, blurOCtx = null;  // ぼかし用オフスクリーンキャンバス
+
+  // ── Screensaver mode (test) ──────────────────────────────────────────────
+  // Moves the whole rendered frame around inside the canvas, DVD-logo style:
+  // independent bounce (triangle wave) motion on x and y, with periods that
+  // are exact fractions (period/3, period/2) of the configured cycle length.
+  // Because both periods divide the cycle length evenly, the combined
+  // position is guaranteed to be exactly (0,0) — i.e. back at the original
+  // centered framing — at t=0, t=period, t=2*period, ... with no drift.
+  let sswStartTs = null;          // performance.now()-basis timestamp of the current play session's first frame
+  let sswSnapshotCanvas = null;   // offscreen buffer holding the undisplaced frame, reused across calls
+
+  function sswTriWave(t, P) {
+    // Triangle wave in [-1, 1]; sswTriWave(0, P) === 0, matching the resting/original position.
+    const u = (((t % P) + P) % P) / P;
+    if (u < 0.25) return u * 4;
+    if (u < 0.75) return 2 - u * 4;
+    return u * 4 - 4;
+  }
+
+  function applyScreensaver(tSec) {
+    const period = Math.max(1, +sswPeriodS.value || 8);
+    const scale  = Math.min(0.98, Math.max(0.5, (+sswScaleS.value || 85) / 100));
+    const rx = imgW * (1 - scale) / 2;
+    const ry = imgH * (1 - scale) / 2;
+    const baseX = rx, baseY = ry; // resting (t=0) position: centered
+    const drawX = baseX + rx * sswTriWave(tSec, period / 3);
+    const drawY = baseY + ry * sswTriWave(tSec, period / 2);
+
+    if (!sswSnapshotCanvas) {
+      sswSnapshotCanvas = document.createElement('canvas');
+    }
+    if (sswSnapshotCanvas.width !== imgW || sswSnapshotCanvas.height !== imgH) {
+      sswSnapshotCanvas.width = imgW; sswSnapshotCanvas.height = imgH;
+    }
+    const sctx = sswSnapshotCanvas.getContext('2d');
+    sctx.clearRect(0, 0, imgW, imgH);
+    sctx.drawImage(canvas, 0, 0);
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, imgW, imgH);
+    ctx.drawImage(sswSnapshotCanvas, 0, 0, imgW, imgH, drawX, drawY, imgW * scale, imgH * scale);
+  }
 
   // ── Color math ────────────────────────────────────────────────────────────
   function rgbToHsl(r, g, b) {  // r,g,b ∈ [0,1]  →  [h∈[0,360), s∈[0,100], l∈[0,100]]
@@ -2534,12 +2632,21 @@ function buildGIF(w, h, frames, delayCs) {
       overlay.style.pointerEvents = 'auto';
       overlay.style.cursor = 'crosshair';
       if (playing) stopPlay();
+      // Region clicks are mapped to image coordinates assuming the canvas
+      // shows the image at full size (see overlayToImage) — force that here
+      // even if playback had frozen mid-shift, and disable the screensaver
+      // controls for the duration so a mid-edit settings change can't bring
+      // the shift back.
+      sswChk.disabled = true; sswPeriodS.disabled = true; sswScaleS.disabled = true;
+      if (hslBuf) { drawNoise(); applyRegionMask(); }
     } else {
       btn.textContent = _rgOff;
       btn.style.color = '';
       overlay.style.pointerEvents = 'none';
       overlay.style.cursor = '';
       octx.clearRect(0, 0, overlay.width, overlay.height);
+      sswChk.disabled = false; sswPeriodS.disabled = false; sswScaleS.disabled = false;
+      redrawIfStopped();
     }
   });
   document.getElementById('clearRegionBtn').addEventListener('click', () => {
@@ -2577,6 +2684,10 @@ function buildGIF(w, h, frames, delayCs) {
       if (cycleN >= 2) cycleFrame = (cycleFrame + 1) % cycleN;
       drawNoise();
       applyRegionMask();
+      if (sswChk.checked && !drawMode) {
+        if (sswStartTs === null) sswStartTs = ts;
+        applyScreensaver((ts - sswStartTs) / 1000);
+      }
       drawRegionOverlay();
       lastTs = ts;
     }
@@ -2586,7 +2697,7 @@ function buildGIF(w, h, frames, delayCs) {
   function startPlay() {
     if (playing || exporting || !hslBuf) return;
     playing = true;
-    lastTs = 0; frameCount = 0; cycleFrame = 0;
+    lastTs = 0; frameCount = 0; cycleFrame = 0; sswStartTs = null;
     if (cycleN >= 2) regenerateBaseAngles();
     animId = requestAnimationFrame(loop);
     playBtn.disabled  = true;
@@ -2667,8 +2778,9 @@ function buildGIF(w, h, frames, delayCs) {
           if (loadedVideo) await prepareVideoFrame(f / gifFps);
           drawNoise();
           applyRegionMask();
-          // ぼかし有効時はキャンバスから読み直す（ぼかし後のピクセルを使う）
-          const src = (regionMask || (blurChk.checked && blurOffscreen))
+          if (sswChk.checked) applyScreensaver(f / gifFps);
+          // ぼかし・スクリーンセイバー有効時はキャンバスから読み直す（変換後のピクセルを使う）
+          const src = (regionMask || (blurChk.checked && blurOffscreen) || sswChk.checked)
             ? ctx.getImageData(0, 0, imgW, imgH).data
             : outBuf;
           frames.push(quantizeToGif(src));
@@ -2740,6 +2852,7 @@ function buildGIF(w, h, frames, delayCs) {
             await applyPGD(eps, stps);
           }
           applyRegionMask();
+          if (sswChk.checked) applyScreensaver(f / fps);
           const vf = new VideoFrame(canvas, { timestamp: Math.round(f * 1e6 / fps) });
           encoder.encode(vf, { keyFrame: f % 60 === 0 });
           vf.close();
@@ -2777,6 +2890,7 @@ function buildGIF(w, h, frames, delayCs) {
       expInterval = setInterval(() => {
         if (!exporting) { clearInterval(expInterval); return; }
         drawNoise();
+        if (sswChk.checked) applyScreensaver(frame / fps);
         frame++;
         progFill.style.width = (frame / total * 100).toFixed(1) + '%';
         setStatus(`WebM 録画中… ${frame} / ${total} フレーム  (${(frame / fps).toFixed(1)} 秒)`);
