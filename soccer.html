@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Penalty Kick Showdown</title>
+<style>
+  /* ============================================================
+     RESET & BASE
+  ============================================================ */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --grass-dark:  #2d7a2d;
+    --grass-light: #34903a;
+    --stripe-w: 80px;
+    --post-color: #f0f0f0;
+    --net-color: rgba(255,255,255,0.18);
+    --shadow: rgba(0,0,0,0.45);
+  }
+
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: var(--grass-dark);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    user-select: none;
+    padding-top: 48px;
+  }
+
+  /* ============================================================
+     FIELD BACKGROUND  (stripes + markings)
+  ============================================================ */
+  .field {
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      90deg,
+      var(--grass-dark)  0px, var(--grass-dark)  var(--stripe-w),
+      var(--grass-light) var(--stripe-w), var(--grass-light) calc(var(--stripe-w)*2)
+    );
+    overflow: hidden;
+    z-index: 0;
+  }
+
+  /* penalty arc */
+  .field::before {
+    content: '';
+    position: absolute;
+    width: 220px; height: 220px;
+    border: 3px solid rgba(255,255,255,0.25);
+    border-radius: 50%;
+    bottom: 160px;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* penalty spot */
+  .field::after {
+    content: '';
+    position: absolute;
+    width: 10px; height: 10px;
+    background: rgba(255,255,255,0.45);
+    border-radius: 50%;
+    bottom: 148px;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* penalty box outline */
+  .penalty-box {
+    position: absolute;
+    width: 380px; height: 200px;
+    border: 3px solid rgba(255,255,255,0.25);
+    border-bottom: none;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* six-yard box */
+  .six-yard-box {
+    position: absolute;
+    width: 160px; height: 80px;
+    border: 3px solid rgba(255,255,255,0.18);
+    border-bottom: none;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* ============================================================
+     MAIN WRAPPER
+  ============================================================ */
+  .game-wrapper {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    padding: 16px;
+    width: 100%;
+    max-width: 680px;
+  }
+
+  /* ============================================================
+     HEADER / SCOREBOARD
+  ============================================================ */
+  .scoreboard {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 14px;
+    padding: 10px 22px;
+    color: #fff;
+  }
+
+  .scoreboard .title {
+    font-size: 1.1rem;
+    font-weight: 800;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #f9e94e;
+    text-shadow: 0 0 12px rgba(249,233,78,0.6);
+  }
+
+  .scoreboard .shot-info {
+    font-size: 0.95rem;
+    opacity: 0.85;
+  }
+
+  .scoreboard .score-val {
+    font-size: 1.6rem;
+    font-weight: 900;
+    color: #6dfa6d;
+    text-shadow: 0 0 10px rgba(109,250,109,0.5);
+  }
+
+  /* shot pips */
+  .pips {
+    display: flex;
+    gap: 6px;
+  }
+
+  .pip {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.5);
+    background: transparent;
+    transition: background 0.3s, border-color 0.3s;
+  }
+
+  .pip.goal  { background: #6dfa6d; border-color: #6dfa6d; box-shadow: 0 0 8px #6dfa6d; }
+  .pip.saved { background: #fa5c5c; border-color: #fa5c5c; box-shadow: 0 0 8px #fa5c5c; }
+
+  /* ============================================================
+     GOAL STRUCTURE
+  ============================================================ */
+  .goal-scene {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 3/1.35;
+    max-height: 260px;
+  }
+
+  .goal {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* crossbar */
+  .crossbar {
+    height: 10px;
+    background: linear-gradient(180deg, #fff 60%, #ccc);
+    border-radius: 4px 4px 0 0;
+    box-shadow: 0 3px 12px rgba(0,0,0,0.5);
+    position: relative;
+    z-index: 3;
+  }
+
+  /* net area */
+  .net {
+    flex: 1;
+    display: flex;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* posts (left & right) */
+  .post-left, .post-right {
+    width: 10px;
+    background: linear-gradient(90deg, #fff, #ddd);
+    box-shadow: 2px 0 8px rgba(0,0,0,0.4);
+    position: relative;
+    z-index: 3;
+    flex-shrink: 0;
+  }
+  .post-right {
+    background: linear-gradient(270deg, #fff, #ddd);
+    box-shadow: -2px 0 8px rgba(0,0,0,0.4);
+  }
+
+  /* net background */
+  .net-inner {
+    flex: 1;
+    background:
+      repeating-linear-gradient(0deg,   transparent, transparent 29px, var(--net-color) 29px, var(--net-color) 31px),
+      repeating-linear-gradient(90deg,  transparent, transparent 29px, var(--net-color) 29px, var(--net-color) 31px),
+      linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.75) 100%);
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* subtle depth gradient over net */
+  .net-inner::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  /* ============================================================
+     ZONE GRID (click targets)
+  ============================================================ */
+  .zones {
+    position: absolute;
+    inset: 0 10px 0 10px;  /* inside posts */
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    z-index: 5;
+    gap: 0;
+  }
+
+  .zone {
+    cursor: crosshair;
+    position: relative;
+    transition: background 0.15s;
+    border: 1px solid transparent;
+  }
+
+  .zone:hover {
+    background: rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.3);
+  }
+
+  /* zone labels (shown on hover) */
+  .zone::after {
+    content: attr(data-hint);
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.0);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    pointer-events: none;
+    transition: color 0.15s;
+  }
+
+  .zone:hover::after { color: rgba(255,255,255,0.55); }
+
+  /* ============================================================
+     GOALKEEPER  (CSS character)
+  ============================================================ */
+  .goalkeeper {
+    position: absolute;
+    bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 6;
+    width: 52px;
+    height: 90px;
+    transition: none;
+  }
+
+  .gk-body {
+    position: absolute;
+    bottom: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 34px; height: 52px;
+    background: linear-gradient(180deg, #ffca28 0%, #ffa000 100%);
+    border-radius: 10px 10px 6px 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+
+  /* jersey stripes */
+  .gk-body::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent, transparent 9px,
+      rgba(0,0,0,0.12) 9px, rgba(0,0,0,0.12) 18px
+    );
+  }
+
+  /* number */
+  .gk-body::after {
+    content: '1';
+    position: absolute;
+    top: 12px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.8rem;
+    font-weight: 900;
+    color: rgba(0,0,0,0.5);
+  }
+
+  .gk-head {
+    position: absolute;
+    bottom: 50px; left: 50%;
+    transform: translateX(-50%);
+    width: 30px; height: 30px;
+    background: #f5c5a3;
+    border-radius: 50%;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    overflow: hidden;
+  }
+
+  /* face */
+  .gk-head::before {
+    content: '';
+    position: absolute;
+    top: 6px; left: 6px;
+    width: 7px; height: 7px;
+    background: #333;
+    border-radius: 50%;
+    box-shadow: 11px 0 0 #333;
+  }
+
+  .gk-head::after {
+    content: '';
+    position: absolute;
+    bottom: 7px; left: 7px;
+    width: 16px; height: 5px;
+    border-bottom: 2px solid rgba(0,0,0,0.35);
+    border-radius: 0 0 50% 50%;
+  }
+
+  /* gloves */
+  .gk-glove-l, .gk-glove-r {
+    position: absolute;
+    bottom: 22px;
+    width: 16px; height: 16px;
+    background: #ff7043;
+    border-radius: 50% 50% 40% 40%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  }
+  .gk-glove-l { left: -4px; }
+  .gk-glove-r { right: -4px; }
+
+  /* legs */
+  .gk-leg-l, .gk-leg-r {
+    position: absolute;
+    bottom: 0;
+    width: 14px; height: 22px;
+    background: #1565c0;
+    border-radius: 3px 3px 5px 5px;
+  }
+  .gk-leg-l { left: 3px; }
+  .gk-leg-r { right: 3px; }
+
+  /* boots */
+  .gk-leg-l::after, .gk-leg-r::after {
+    content: '';
+    position: absolute;
+    bottom: -4px; left: -2px;
+    width: 18px; height: 8px;
+    background: #111;
+    border-radius: 3px;
+  }
+
+  /* ============================================================
+     GOALKEEPER DIVE ANIMATIONS
+  ============================================================ */
+  @keyframes dive-top-left {
+    0%   { transform: translateX(-50%) rotate(0deg); }
+    30%  { transform: translateX(calc(-50% - 80px)) translateY(-55px) rotate(-70deg); }
+    60%  { transform: translateX(calc(-50% - 100px)) translateY(-60px) rotate(-80deg); }
+    100% { transform: translateX(calc(-50% - 90px)) translateY(-50px) rotate(-75deg); }
+  }
+  @keyframes dive-top-center {
+    0%   { transform: translateX(-50%) rotate(0deg); }
+    30%  { transform: translateX(-50%) translateY(-65px) rotate(0deg); }
+    60%  { transform: translateX(-50%) translateY(-70px) rotate(0deg); }
+    100% { transform: translateX(-50%) translateY(-60px) rotate(0deg); }
+  }
+  @keyframes dive-top-right {
+    0%   { transform: translateX(-50%) rotate(0deg); }
+    30%  { transform: translateX(calc(-50% + 80px)) translateY(-55px) rotate(70deg); }
+    60%  { transform: translateX(calc(-50% + 100px)) translateY(-60px) rotate(80deg); }
+    100% { transform: translateX(calc(-50% + 90px)) translateY(-50px) rotate(75deg); }
+  }
+  @keyframes dive-bottom-left {
+    0%   { transform: translateX(-50%) rotate(0deg); }
+    30%  { transform: translateX(calc(-50% - 80px)) translateY(5px) rotate(-45deg); }
+    60%  { transform: translateX(calc(-50% - 100px)) translateY(8px) rotate(-50deg); }
+    100% { transform: translateX(calc(-50% - 90px)) translateY(6px) rotate(-47deg); }
+  }
+  @keyframes dive-bottom-center {
+    0%   { transform: translateX(-50%) rotate(0deg); }
+    30%  { transform: translateX(-50%) translateY(8px) scaleY(0.85); }
+    60%  { transform: translateX(-50%) translateY(10px) scaleY(0.8); }
+    100% { transform: translateX(-50%) translateY(9px) scaleY(0.82); }
+  }
+  @keyframes dive-bottom-right {
+    0%   { transform: translateX(-50%) rotate(0deg); }
+    30%  { transform: translateX(calc(-50% + 80px)) translateY(5px) rotate(45deg); }
+    60%  { transform: translateX(calc(-50% + 100px)) translateY(8px) rotate(50deg); }
+    100% { transform: translateX(calc(-50% + 90px)) translateY(6px) rotate(47deg); }
+  }
+
+  .goalkeeper.diving-tl { animation: dive-top-left    0.45s ease-out forwards; }
+  .goalkeeper.diving-tc { animation: dive-top-center  0.45s ease-out forwards; }
+  .goalkeeper.diving-tr { animation: dive-top-right   0.45s ease-out forwards; }
+  .goalkeeper.diving-bl { animation: dive-bottom-left 0.45s ease-out forwards; }
+  .goalkeeper.diving-bc { animation: dive-bottom-center 0.45s ease-out forwards; }
+  .goalkeeper.diving-br { animation: dive-bottom-right 0.45s ease-out forwards; }
+
+  /* ============================================================
+     SOCCER BALL
+  ============================================================ */
+  .ball {
+    position: absolute;
+    bottom: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px; height: 36px;
+    z-index: 10;
+    pointer-events: none;
+    opacity: 1;
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.6));
+  }
+
+  .ball svg {
+    width: 100%; height: 100%;
+  }
+
+  /* zone target positions (as percentages of net-inner) */
+  /* These are set via JS inline styles */
+
+  @keyframes fly-ball {
+    0% {
+      bottom: -20px;
+      left: 50%;
+      transform: translateX(-50%) scale(1) rotate(0deg);
+      opacity: 1;
+    }
+    60% {
+      opacity: 1;
+    }
+    100% {
+      bottom: var(--ball-target-y);
+      left: var(--ball-target-x);
+      transform: translateX(-50%) scale(var(--ball-target-scale)) rotate(720deg);
+      opacity: 0.9;
+    }
+  }
+
+  .ball.flying {
+    animation: fly-ball 0.7s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+  }
+
+  /* ============================================================
+     KICKER  (foreground, back view, blue uniform)
+  ============================================================ */
+  .kicker {
+    position: absolute;
+    bottom: -140px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 58px;
+    height: 112px;
+    z-index: 8;
+    pointer-events: none;
+  }
+
+  .kicker-head {
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 26px; height: 26px;
+    background: #f5c5a3;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  }
+
+  /* hair, seen from behind */
+  .kicker-head::after {
+    content: '';
+    position: absolute;
+    top: -2px; left: -2px;
+    width: 29px; height: 17px;
+    background: #3b2a1a;
+    border-radius: 50% 50% 40% 40% / 65% 65% 30% 30%;
+  }
+
+  .kicker-jersey {
+    position: absolute;
+    top: 22px; left: 50%;
+    transform: translateX(-50%);
+    width: 45px; height: 46px;
+    background: linear-gradient(180deg, #0050ff 0%, #0050ff 62%, #a6e100 100%);
+    border-radius: 11px 11px 6px 6px;
+    box-shadow: 0 5px 12px rgba(0,0,0,0.5);
+  }
+
+  /* collar */
+  .kicker-jersey::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 15px; height: 6px;
+    background: #f5c400;
+    border-radius: 0 0 5px 5px;
+  }
+
+  /* back number */
+  .kicker-jersey::after {
+    content: '12';
+    position: absolute;
+    top: 10px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 1rem;
+    font-weight: 900;
+    color: #f5c400;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  }
+
+  .kicker-arm-l, .kicker-arm-r {
+    position: absolute;
+    top: 25px;
+    width: 12px; height: 33px;
+    background: linear-gradient(180deg, #0080ff, #a6e100);
+    border-radius: 6px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  }
+  .kicker-arm-l { left: -4px;  transform: rotate(10deg); }
+  .kicker-arm-r { right: -4px; transform: rotate(-20deg); }
+
+  .kicker-shorts {
+    position: absolute;
+    top: 66px; left: 50%;
+    transform: translateX(-50%);
+    width: 42px; height: 19px;
+    background: #fff;
+    border-radius: 5px 5px 8px 8px;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+  }
+
+  .kicker-leg-l, .kicker-leg-r {
+    position: absolute;
+    top: 81px;
+    width: 13px; height: 30px;
+    background: #f5c5a3;
+    border-radius: 3px;
+  }
+  .kicker-leg-l { left: 10px; transform: rotate(-6deg); }
+  .kicker-leg-r { left: 30px; transform: rotate(20deg); }
+
+  /* boots */
+  .kicker-leg-l::after, .kicker-leg-r::after {
+    content: '';
+    position: absolute;
+    bottom: -5px; left: -2px;
+    width: 17px; height: 8px;
+    background: #111;
+    border-radius: 3px;
+  }
+
+  /* kick lunge — kicker steps toward the goal as the ball is struck */
+  @keyframes kicker-kick {
+    0%   { transform: translateX(-50%) translateY(0) scale(1); }
+    40%  { transform: translateX(-50%) translateY(-20px) scale(0.93); }
+    100% { transform: translateX(-50%) translateY(-13px) scale(0.95); }
+  }
+
+  .kicker.kicking {
+    animation: kicker-kick 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+  }
+
+  /* ============================================================
+     RESULT FLASH  (GOAL! / SAVED!)
+  ============================================================ */
+  .result-flash {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    z-index: 20;
+    font-size: clamp(2.4rem, 8vw, 4rem);
+    font-weight: 900;
+    letter-spacing: 4px;
+    pointer-events: none;
+    opacity: 0;
+    text-shadow: 0 4px 20px rgba(0,0,0,0.6);
+    white-space: nowrap;
+  }
+
+  @keyframes flash-goal {
+    0%   { transform: translate(-50%,-50%) scale(0.4); opacity: 0; }
+    30%  { transform: translate(-50%,-50%) scale(1.25); opacity: 1; }
+    55%  { transform: translate(-50%,-50%) scale(0.95); opacity: 1; }
+    75%  { transform: translate(-50%,-50%) scale(1.05); opacity: 1; }
+    100% { transform: translate(-50%,-50%) scale(1);    opacity: 0; }
+  }
+
+  @keyframes flash-saved {
+    0%   { transform: translate(-50%,-50%) scale(0.4);  opacity: 0; }
+    30%  { transform: translate(-50%,-50%) scale(1.15); opacity: 1; }
+    70%  { transform: translate(-50%,-50%) scale(1.05); opacity: 1; }
+    100% { transform: translate(-50%,-50%) scale(1);    opacity: 0; }
+  }
+
+  .result-flash.goal-anim  {
+    color: #f9e94e;
+    text-shadow: 0 0 30px rgba(249,233,78,0.9), 0 4px 20px rgba(0,0,0,0.8);
+    animation: flash-goal 1.4s ease-out forwards;
+  }
+  .result-flash.saved-anim {
+    color: #ff6b6b;
+    text-shadow: 0 0 30px rgba(255,107,107,0.9), 0 4px 20px rgba(0,0,0,0.8);
+    animation: flash-saved 1.4s ease-out forwards;
+  }
+
+  /* confetti particles */
+  .confetti-container {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 19;
+    overflow: hidden;
+  }
+
+  @keyframes confetti-fall {
+    0%   { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(300px) rotate(720deg); opacity: 0; }
+  }
+
+  .confetti-dot {
+    position: absolute;
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    animation: confetti-fall linear forwards;
+  }
+
+  /* ============================================================
+     INSTRUCTION TEXT
+  ============================================================ */
+  .instruction {
+    color: rgba(255,255,255,0.85);
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 1px;
+    background: rgba(0,0,0,0.4);
+    padding: 8px 20px;
+    border-radius: 30px;
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255,255,255,0.15);
+    transition: opacity 0.3s;
+    text-align: center;
+  }
+
+  /* ============================================================
+     END SCREEN OVERLAY
+  ============================================================ */
+  .end-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s;
+  }
+
+  .end-screen.visible {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .end-card {
+    background: linear-gradient(160deg, #1a3a1a 0%, #0a1a0a 100%);
+    border: 2px solid rgba(109,250,109,0.4);
+    border-radius: 24px;
+    padding: 40px 50px;
+    text-align: center;
+    color: #fff;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 0 40px rgba(109,250,109,0.15);
+    max-width: 420px;
+    width: 90%;
+    transform: scale(0.85);
+    transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .end-screen.visible .end-card {
+    transform: scale(1);
+  }
+
+  .end-card h2 {
+    font-size: 2rem;
+    font-weight: 900;
+    color: #f9e94e;
+    text-shadow: 0 0 20px rgba(249,233,78,0.6);
+    margin-bottom: 8px;
+    letter-spacing: 2px;
+  }
+
+  .end-card .final-score {
+    font-size: 4.5rem;
+    font-weight: 900;
+    color: #6dfa6d;
+    text-shadow: 0 0 25px rgba(109,250,109,0.6);
+    line-height: 1;
+    margin: 16px 0;
+  }
+
+  .end-card .final-score span {
+    font-size: 2rem;
+    color: rgba(255,255,255,0.5);
+  }
+
+  .end-card .verdict {
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: #fff;
+  }
+
+  .end-card .verdict-sub {
+    font-size: 0.9rem;
+    color: rgba(255,255,255,0.55);
+    margin-bottom: 28px;
+  }
+
+  .end-pips {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 30px;
+  }
+
+  .end-pip {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.3);
+  }
+  .end-pip.goal  { background: #6dfa6d; border-color: #6dfa6d; box-shadow: 0 0 10px #6dfa6d; }
+  .end-pip.saved { background: #fa5c5c; border-color: #fa5c5c; box-shadow: 0 0 10px #fa5c5c; }
+
+  .play-again-btn {
+    display: inline-block;
+    padding: 14px 40px;
+    font-size: 1.1rem;
+    font-weight: 800;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #111;
+    background: linear-gradient(135deg, #f9e94e 0%, #ffb300 100%);
+    border: none;
+    border-radius: 50px;
+    cursor: pointer;
+    box-shadow: 0 6px 24px rgba(249,233,78,0.45), 0 2px 8px rgba(0,0,0,0.4);
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+
+  .play-again-btn:hover {
+    transform: translateY(-2px) scale(1.04);
+    box-shadow: 0 10px 30px rgba(249,233,78,0.55), 0 2px 8px rgba(0,0,0,0.4);
+  }
+
+  .play-again-btn:active {
+    transform: scale(0.97);
+  }
+
+  /* ============================================================
+     IDLE GOALKEEPER SWAY
+  ============================================================ */
+  @keyframes gk-sway {
+    0%   { transform: translateX(-50%) translateY(0); }
+    25%  { transform: translateX(calc(-50% + 8px)) translateY(-2px); }
+    75%  { transform: translateX(calc(-50% - 8px)) translateY(-2px); }
+    100% { transform: translateX(-50%) translateY(0); }
+  }
+
+  .goalkeeper.idle { animation: gk-sway 1.8s ease-in-out infinite; }
+
+  /* ============================================================
+     RESPONSIVE TWEAKS
+  ============================================================ */
+  @media (max-width: 480px) {
+    .game-wrapper { padding: 10px; gap: 10px; }
+    .scoreboard .title { font-size: 0.85rem; }
+    .scoreboard { padding: 8px 14px; }
+    .end-card { padding: 28px 24px; }
+    .end-card h2 { font-size: 1.5rem; }
+    .end-card .final-score { font-size: 3.5rem; }
+    .kicker { transform: translateX(-50%) scale(0.8); transform-origin: bottom center; }
+  }
+
+  /* ============================================================
+     DONATION BANNER
+  ============================================================ */
+  .donation-banner {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+    background: linear-gradient(90deg, #003082, #0046b8, #003082);
+    border-bottom: 3px solid #f5c400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 10px 20px;
+    text-align: center;
+  }
+
+  .donation-banner .badge {
+    background: #f5c400;
+    color: #003082;
+    font-weight: 900;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .donation-banner a {
+    color: #fff;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 0.9rem;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid rgba(255,255,255,0.4);
+    transition: color 0.2s, border-color 0.2s;
+  }
+
+  .donation-banner a:hover {
+    color: #f5c400;
+    border-color: #f5c400;
+  }
+
+  .donation-banner .arrow {
+    color: #f5c400;
+    font-size: 1rem;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<!-- DONATION BANNER -->
+<div class="donation-banner">
+  <span class="badge">⚽ ブラウブリッツ秋田</span>
+  <a href="https://syncable.biz/associate/minsta-akita#associate-tabs" target="_blank" rel="noopener">ブラウブリッツ秋田を応援する — 寄付はこちら</a>
+  <span class="arrow">→</span>
+</div>
+
+<!-- FIELD -->
+<div class="field">
+  <div class="penalty-box"></div>
+  <div class="six-yard-box"></div>
+</div>
+
+<!-- MAIN GAME WRAPPER -->
+<div class="game-wrapper">
+
+  <!-- SCOREBOARD -->
+  <div class="scoreboard">
+    <div>
+      <div class="title">Penalty Showdown</div>
+      <div class="shot-info" id="shot-info">Shot 1 / 5</div>
+    </div>
+    <div class="pips" id="pips"></div>
+    <div>
+      <div style="font-size:0.75rem;opacity:0.6;text-align:right;">GOALS</div>
+      <div class="score-val" id="score-val">0</div>
+    </div>
+  </div>
+
+  <!-- GOAL SCENE -->
+  <div class="goal-scene" id="goal-scene">
+
+    <div class="goal">
+      <div class="crossbar"></div>
+      <div class="net">
+        <div class="post-left"></div>
+        <div class="net-inner" id="net-inner">
+
+          <!-- ZONE GRID -->
+          <div class="zones" id="zones">
+            <div class="zone" data-zone="tl" data-hint="Top Left"></div>
+            <div class="zone" data-zone="tc" data-hint="Top Center"></div>
+            <div class="zone" data-zone="tr" data-hint="Top Right"></div>
+            <div class="zone" data-zone="bl" data-hint="Bottom Left"></div>
+            <div class="zone" data-zone="bc" data-hint="Bottom Center"></div>
+            <div class="zone" data-zone="br" data-hint="Bottom Right"></div>
+          </div>
+
+          <!-- GOALKEEPER -->
+          <div class="goalkeeper idle" id="goalkeeper">
+            <div class="gk-head"></div>
+            <div class="gk-body"></div>
+            <div class="gk-glove-l"></div>
+            <div class="gk-glove-r"></div>
+            <div class="gk-leg-l"></div>
+            <div class="gk-leg-r"></div>
+          </div>
+
+        </div>
+        <div class="post-right"></div>
+      </div>
+    </div>
+
+    <!-- BALL (lives outside goal for positioning ease) -->
+    <div class="ball" id="ball">
+      <svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="ballGrad" cx="38%" cy="32%" r="60%">
+            <stop offset="0%" stop-color="#ffffff"/>
+            <stop offset="100%" stop-color="#d0d0d0"/>
+          </radialGradient>
+        </defs>
+        <circle cx="18" cy="18" r="17" fill="url(#ballGrad)" stroke="#222" stroke-width="1"/>
+        <!-- pentagon patch -->
+        <polygon points="18,4 22.5,10 20,16 16,16 13.5,10" fill="#222" opacity="0.85"/>
+        <polygon points="4,14  9,10  13.5,14  11,20  5,19"  fill="#222" opacity="0.85"/>
+        <polygon points="32,14 27,10 22.5,14 25,20 31,19"   fill="#222" opacity="0.85"/>
+        <polygon points="10,28 8,22  13,18  18,22 15,28"    fill="#222" opacity="0.85"/>
+        <polygon points="26,28 28,22 23,18  18,22 21,28"    fill="#222" opacity="0.85"/>
+        <circle cx="18" cy="18" r="17" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
+      </svg>
+    </div>
+
+    <!-- KICKER (foreground, back view, blue uniform) -->
+    <div class="kicker" id="kicker" aria-hidden="true">
+      <div class="kicker-head"></div>
+      <div class="kicker-jersey"></div>
+      <div class="kicker-arm-l"></div>
+      <div class="kicker-arm-r"></div>
+      <div class="kicker-shorts"></div>
+      <div class="kicker-leg-l"></div>
+      <div class="kicker-leg-r"></div>
+    </div>
+
+    <!-- RESULT FLASH -->
+    <div class="result-flash" id="result-flash"></div>
+
+    <!-- CONFETTI -->
+    <div class="confetti-container" id="confetti-container"></div>
+
+  </div>
+
+  <!-- INSTRUCTION -->
+  <div class="instruction" id="instruction">Click a zone in the goal to shoot!</div>
+
+</div>
+
+<!-- END SCREEN -->
+<div class="end-screen" id="end-screen">
+  <div class="end-card">
+    <h2>FULL TIME</h2>
+    <div class="final-score" id="final-score">0<span>/5</span></div>
+    <div class="verdict" id="verdict"></div>
+    <div class="verdict-sub" id="verdict-sub"></div>
+    <div class="end-pips" id="end-pips"></div>
+    <button class="play-again-btn" id="play-again-btn">Play Again</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  /* ----------------------------------------------------------
+     STATE
+  ---------------------------------------------------------- */
+  const TOTAL_SHOTS = 5;
+  const ZONES = ['tl','tc','tr','bl','bc','br'];
+  const DIVE_CLASS = { tl:'diving-tl', tc:'diving-tc', tr:'diving-tr',
+                       bl:'diving-bl', bc:'diving-bc', br:'diving-br' };
+
+  /* zone positions (percentage of net area): { x%, y%, scale } */
+  const ZONE_POS = {
+    tl: { x:'17%',  y:'15%', scale: 0.55 },
+    tc: { x:'50%',  y:'10%', scale: 0.55 },
+    tr: { x:'83%',  y:'15%', scale: 0.55 },
+    bl: { x:'17%',  y:'60%', scale: 0.75 },
+    bc: { x:'50%',  y:'62%', scale: 0.75 },
+    br: { x:'83%',  y:'60%', scale: 0.75 },
+  };
+
+  let score = 0;
+  let shotsTaken = 0;
+  let results = [];
+  let busy = false;
+
+  /* ----------------------------------------------------------
+     DOM
+  ---------------------------------------------------------- */
+  const el = id => document.getElementById(id);
+  const gk         = el('goalkeeper');
+  const kicker      = el('kicker');
+  const ball        = el('ball');
+  const zones       = el('zones');
+  const resultFlash = el('result-flash');
+  const confettiC   = el('confetti-container');
+  const instruction = el('instruction');
+  const pipsEl      = el('pips');
+  const scoreValEl  = el('score-val');
+  const shotInfoEl  = el('shot-info');
+  const endScreen   = el('end-screen');
+  const finalScore  = el('final-score');
+  const verdict     = el('verdict');
+  const verdictSub  = el('verdict-sub');
+  const endPips     = el('end-pips');
+  const playAgainBtn= el('play-again-btn');
+  const netInner    = el('net-inner');
+  const goalScene   = el('goal-scene');
+
+  /* ----------------------------------------------------------
+     INIT PIPS
+  ---------------------------------------------------------- */
+  function initPips() {
+    pipsEl.innerHTML = '';
+    for (let i = 0; i < TOTAL_SHOTS; i++) {
+      const d = document.createElement('div');
+      d.className = 'pip';
+      d.id = `pip-${i}`;
+      pipsEl.appendChild(d);
+    }
+  }
+
+  function updatePip(idx, type) {
+    const pip = el(`pip-${idx}`);
+    if (pip) pip.classList.add(type);
+  }
+
+  function updateScoreBoard() {
+    scoreValEl.textContent = score;
+    const shotNum = Math.min(shotsTaken + 1, TOTAL_SHOTS);
+    shotInfoEl.textContent = `Shot ${shotNum} / ${TOTAL_SHOTS}`;
+  }
+
+  /* ----------------------------------------------------------
+     RANDOM ZONE
+  ---------------------------------------------------------- */
+  function randomZone() {
+    return ZONES[Math.floor(Math.random() * ZONES.length)];
+  }
+
+  /* ----------------------------------------------------------
+     SHOOT
+  ---------------------------------------------------------- */
+  function shoot(playerZone) {
+    if (busy || shotsTaken >= TOTAL_SHOTS) return;
+    busy = true;
+
+    // disable zones
+    zones.style.pointerEvents = 'none';
+    instruction.style.opacity = '0.3';
+
+    const gkZone = randomZone();
+    const isGoal = playerZone !== gkZone;
+
+    // ---- GK dive ----
+    gk.classList.remove('idle');
+    // force reflow
+    void gk.offsetWidth;
+    gk.classList.add(DIVE_CLASS[gkZone]);
+
+    // ---- Kicker lunge toward goal ----
+    kicker.classList.remove('kicking');
+    void kicker.offsetWidth;
+    kicker.classList.add('kicking');
+
+    // ---- Ball flight ----
+    // Compute absolute position inside goal-scene
+    const netRect   = netInner.getBoundingClientRect();
+    const sceneRect = goalScene.getBoundingClientRect();
+
+    const pos = ZONE_POS[playerZone];
+    // x relative to scene center
+    const netLeft  = netRect.left  - sceneRect.left;
+    const netTop   = netRect.top   - sceneRect.top;
+    const netW     = netRect.width;
+    const netH     = netRect.height;
+
+    // target is in net-inner coords → convert to goal-scene coords
+    const targetXpx = netLeft + (parseFloat(pos.x) / 100) * netW;
+    const targetYpx = netTop  + (parseFloat(pos.y) / 100) * netH;
+
+    // ball origin: bottom-center of goal-scene
+    // CSS vars for the keyframe
+    ball.style.setProperty('--ball-target-x', targetXpx + 'px');
+    ball.style.setProperty('--ball-target-y', (sceneRect.height - targetYpx) + 'px');
+    ball.style.setProperty('--ball-target-scale', pos.scale);
+
+    ball.classList.remove('flying');
+    void ball.offsetWidth;
+    ball.classList.add('flying');
+
+    // ---- After animation ----
+    setTimeout(() => {
+      showResult(isGoal, playerZone);
+    }, 700);
+
+    setTimeout(() => {
+      finishShot(isGoal);
+    }, 2200);
+  }
+
+  function showResult(isGoal, zone) {
+    resultFlash.className = 'result-flash';
+    void resultFlash.offsetWidth;
+
+    if (isGoal) {
+      resultFlash.textContent = 'GOAL!';
+      resultFlash.classList.add('goal-anim');
+      spawnConfetti();
+    } else {
+      resultFlash.textContent = 'SAVED!';
+      resultFlash.classList.add('saved-anim');
+    }
+  }
+
+  function finishShot(isGoal) {
+    if (isGoal) score++;
+    results.push(isGoal ? 'goal' : 'saved');
+    updatePip(shotsTaken, isGoal ? 'goal' : 'saved');
+    shotsTaken++;
+    updateScoreBoard();
+
+    if (shotsTaken >= TOTAL_SHOTS) {
+      setTimeout(showEndScreen, 600);
+      return;
+    }
+
+    // reset for next shot
+    setTimeout(resetForNextShot, 300);
+  }
+
+  function resetForNextShot() {
+    // reset ball
+    ball.classList.remove('flying');
+    void ball.offsetWidth;
+
+    // reset goalkeeper
+    DIVE_CLASS_VALUES.forEach(c => gk.classList.remove(c));
+    gk.classList.remove('idle');
+    void gk.offsetWidth;
+    gk.classList.add('idle');
+
+    // reset kicker
+    kicker.classList.remove('kicking');
+
+    // re-enable zones
+    zones.style.pointerEvents = '';
+    instruction.style.opacity = '';
+    instruction.textContent = 'Click a zone in the goal to shoot!';
+
+    busy = false;
+  }
+
+  const DIVE_CLASS_VALUES = Object.values(DIVE_CLASS);
+
+  /* ----------------------------------------------------------
+     CONFETTI
+  ---------------------------------------------------------- */
+  const CONFETTI_COLORS = ['#f9e94e','#6dfa6d','#ff6b6b','#6bbbff','#ff9f43','#fff'];
+
+  function spawnConfetti() {
+    confettiC.innerHTML = '';
+    for (let i = 0; i < 38; i++) {
+      const dot = document.createElement('div');
+      dot.className = 'confetti-dot';
+      dot.style.left = (Math.random() * 100) + '%';
+      dot.style.top  = (Math.random() * 30)  + '%';
+      dot.style.background = CONFETTI_COLORS[Math.floor(Math.random()*CONFETTI_COLORS.length)];
+      dot.style.width  = (Math.random()*8+4) + 'px';
+      dot.style.height = (Math.random()*8+4) + 'px';
+      dot.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+      dot.style.animationDuration = (Math.random()*0.8+0.8) + 's';
+      dot.style.animationDelay    = (Math.random()*0.4) + 's';
+      confettiC.appendChild(dot);
+    }
+  }
+
+  /* ----------------------------------------------------------
+     END SCREEN
+  ---------------------------------------------------------- */
+  const VERDICTS = [
+    ['Rough Night in Goal...', 'The goalkeeper had your number.'],
+    ['Not Bad!', 'One goal is a start!'],
+    ['Decent Effort', 'You beat the keeper twice!'],
+    ['Hat-Trick Hero!', '3 out of 5 - solid penalty taker.'],
+    ['Clinical Finishing!', '4 goals - ice in those veins!'],
+    ['PERFECT!', 'Flawless penalty taking. Legendary!'],
+  ];
+
+  function showEndScreen() {
+    finalScore.innerHTML = `${score}<span>/5</span>`;
+
+    const [v, vs] = VERDICTS[score];
+    verdict.textContent = v;
+    verdictSub.textContent = vs;
+
+    endPips.innerHTML = '';
+    results.forEach(r => {
+      const d = document.createElement('div');
+      d.className = `end-pip ${r}`;
+      endPips.appendChild(d);
+    });
+
+    endScreen.classList.add('visible');
+    if (score >= 4) spawnConfetti();
+  }
+
+  /* ----------------------------------------------------------
+     RESET / PLAY AGAIN
+  ---------------------------------------------------------- */
+  function resetGame() {
+    score = 0;
+    shotsTaken = 0;
+    results = [];
+    busy = false;
+
+    // hide end screen
+    endScreen.classList.remove('visible');
+
+    // reset UI
+    initPips();
+    updateScoreBoard();
+
+    ball.classList.remove('flying');
+    void ball.offsetWidth;
+
+    DIVE_CLASS_VALUES.forEach(c => gk.classList.remove(c));
+    gk.classList.remove('idle');
+    void gk.offsetWidth;
+    gk.classList.add('idle');
+
+    kicker.classList.remove('kicking');
+
+    zones.style.pointerEvents = '';
+    instruction.style.opacity = '';
+    instruction.textContent = 'Click a zone in the goal to shoot!';
+
+    confettiC.innerHTML = '';
+    resultFlash.className = 'result-flash';
+  }
+
+  /* ----------------------------------------------------------
+     EVENT LISTENERS
+  ---------------------------------------------------------- */
+  zones.addEventListener('click', e => {
+    const zone = e.target.closest('.zone');
+    if (!zone) return;
+    shoot(zone.dataset.zone);
+  });
+
+  playAgainBtn.addEventListener('click', resetGame);
+
+  /* ----------------------------------------------------------
+     BOOT
+  ---------------------------------------------------------- */
+  initPips();
+  updateScoreBoard();
+
+})();
+</script>
+</body>
+</html>

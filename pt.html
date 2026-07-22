@@ -1201,7 +1201,7 @@ function buildGIF(w, h, frames, delayCs) {
       document.getElementById('videoModeInfo').textContent =
         `${video.videoWidth}×${video.videoHeight}, ${videoDuration.toFixed(1)}seg`;
       const durIn = document.getElementById('durIn');
-      const maxDur = Math.max(1, Math.floor(videoDuration));
+      const maxDur = Math.max(1, Math.ceil(videoDuration));
       durIn.max = maxDur;
       if (+durIn.value > maxDur) durIn.value = maxDur;
       processImage(video, file.name);
@@ -1988,7 +1988,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (cycleN >= 2) regenerateBaseAngles();
 
     const fps   = Math.max(1, parseInt(document.getElementById('fpsIn').value)  || 60);
-    const durCap = loadedVideo ? Math.min(120, Math.max(1, Math.floor(videoDuration))) : 120;
+    const durCap = loadedVideo ? Math.min(120, Math.max(1, Math.ceil(videoDuration))) : 120;
     const dur   = Math.max(1, Math.min(durCap, parseInt(document.getElementById('durIn').value) || 5));
     const total = fps * dur;
     const fmt   = document.getElementById('formatSel').value;

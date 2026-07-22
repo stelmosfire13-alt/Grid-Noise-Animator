@@ -504,6 +504,15 @@
         </select>
       </div>
       <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;">
+        <div class="field-label" style="margin-bottom:5px;">音声を追加（テスト）</div>
+        <input type="file" id="audioIn" accept="audio/*" style="font-size:12px;width:100%;">
+        <div id="audioInfo" style="display:none;margin-top:6px;font-size:0.72rem;color:#888;">
+          <span id="audioInfoText"></span>
+          <button class="btn btn-gray" id="clearAudioBtn" style="font-size:0.7rem;padding:2px 8px;margin-left:6px;">✕ 削除</button>
+        </div>
+        <div style="font-size:0.66rem;color:#777;margin-top:4px;line-height:1.4;">MP4 / WebM 書き出しに音声トラックとして合成します（GIFには反映されません）。</div>
+      </div>
+      <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;">
         <div class="field">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="advChk" style="width:14px;height:14px">
@@ -1733,7 +1742,7 @@ function buildGIF(w, h, frames, delayCs) {
       document.getElementById('videoModeInfo').textContent =
         `${video.videoWidth}×${video.videoHeight}, ${videoDuration.toFixed(1)}秒`;
       const durIn = document.getElementById('durIn');
-      const maxDur = Math.max(1, Math.floor(videoDuration));
+      const maxDur = Math.max(1, Math.ceil(videoDuration));
       durIn.max = maxDur;
       if (+durIn.value > maxDur) durIn.value = maxDur;
       updateOrientResetBtn();
@@ -2671,6 +2680,15 @@ function buildGIF(w, h, frames, delayCs) {
     lastTs = 0; frameCount = 0; cycleFrame = 0; sswStartTs = null;
     if (cycleN >= 2) regenerateBaseAngles();
     animId = requestAnimationFrame(loop);
+    if (loadedAudioBuffer) {
+      if (!previewAudioCtx) previewAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (previewAudioCtx.state === 'suspended') previewAudioCtx.resume();
+      previewAudioSrc = previewAudioCtx.createBufferSource();
+      previewAudioSrc.buffer = loadedAudioBuffer;
+      previewAudioSrc.loop = true;
+      previewAudioSrc.connect(previewAudioCtx.destination);
+      previewAudioSrc.start(0);
+    }
     playBtn.disabled  = true;
     pauseBtn.disabled = false;
     setBadge('▶ 再生中', 'playing');
@@ -2680,6 +2698,7 @@ function buildGIF(w, h, frames, delayCs) {
   function stopPlay() {
     playing = false;
     if (animId) { cancelAnimationFrame(animId); animId = null; }
+    stopPreviewAudio();
     playBtn.disabled  = !hslBuf;
     pauseBtn.disabled = true;
     setBadge('');
@@ -2697,6 +2716,122 @@ function buildGIF(w, h, frames, delayCs) {
 
   playBtn.addEventListener('click',  startPlay);
   pauseBtn.addEventListener('click', stopPlay);
+
+  // ── Audio loading (test) ──────────────────────────────────────────────────
+  // Decoded once up front into an AudioBuffer (raw PCM) so both export paths
+  // (MediaRecorder for WebM, manual AudioEncoder for MP4) can read directly
+  // from it without re-parsing the source file.
+  let loadedAudioBuffer = null;
+  let loadedAudioName = '';
+
+  // Separate from the export paths' own audio contexts/nodes — this one is
+  // just for audible live preview, reused across play/pause cycles (created
+  // lazily so it only exists once audio is actually loaded and played).
+  let previewAudioCtx = null;
+  let previewAudioSrc = null;
+
+  function stopPreviewAudio() {
+    if (previewAudioSrc) {
+      try { previewAudioSrc.stop(); } catch {}
+      previewAudioSrc.disconnect();
+      previewAudioSrc = null;
+    }
+  }
+
+  const audioIn = document.getElementById('audioIn');
+  audioIn.addEventListener('change', async () => {
+    const file = audioIn.files[0];
+    if (!file) return;
+    setStatus('音声を読み込み中...');
+    try {
+      const arrayBuf = await file.arrayBuffer();
+      const actx = new (window.AudioContext || window.webkitAudioContext)();
+      const buf = await actx.decodeAudioData(arrayBuf);
+      actx.close();
+      loadedAudioBuffer = buf;
+      loadedAudioName = file.name;
+      document.getElementById('audioInfo').style.display = 'block';
+      document.getElementById('audioInfoText').textContent = `${file.name} (${buf.duration.toFixed(1)}秒)`;
+      // Convenience default, same pattern as the screensaver period sync:
+      // match the export duration to the audio's length.
+      const durInEl = document.getElementById('durIn');
+      const maxDur = +durInEl.max || 120;
+      durInEl.value = Math.min(Math.max(1, Math.round(buf.duration)), maxDur);
+      setStatus(`音声読み込み完了: ${file.name}`);
+    } catch (e) {
+      loadedAudioBuffer = null; loadedAudioName = '';
+      document.getElementById('audioInfo').style.display = 'none';
+      setStatus('音声の読み込みに失敗しました: ' + e.message);
+      audioIn.value = '';
+    }
+  });
+  document.getElementById('clearAudioBtn').addEventListener('click', () => {
+    loadedAudioBuffer = null; loadedAudioName = '';
+    audioIn.value = '';
+    document.getElementById('audioInfo').style.display = 'none';
+    stopPreviewAudio();
+  });
+
+  // Encodes loadedAudioBuffer (trimmed to durSec) into the given mp4-muxer
+  // Muxer as a second track, using whichever codec the caller already
+  // confirmed is supported. Runs after the video track is fully encoded —
+  // simpler than interleaving, and mp4-muxer accepts chunks per track
+  // independently regardless of add order.
+  async function muxAudioTrack(muxer, audioCodec, durSec) {
+    const buf = loadedAudioBuffer;
+    const numberOfChannels = buf.numberOfChannels;
+    const sampleRate = buf.sampleRate;
+    const totalSamples = Math.min(buf.length, Math.floor(Math.min(buf.duration, durSec) * sampleRate));
+
+    const encoder = new AudioEncoder({
+      output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+      error:  (e) => { throw e; },
+    });
+    encoder.configure({
+      codec: audioCodec === 'aac' ? 'mp4a.40.2' : 'opus',
+      sampleRate, numberOfChannels, bitrate: 128000,
+    });
+
+    const FRAME = 4096;
+    for (let offset = 0; offset < totalSamples; offset += FRAME) {
+      const frames = Math.min(FRAME, totalSamples - offset);
+      const planar = new Float32Array(frames * numberOfChannels);
+      for (let ch = 0; ch < numberOfChannels; ch++) {
+        planar.set(buf.getChannelData(ch).subarray(offset, offset + frames), ch * frames);
+      }
+      const audioData = new AudioData({
+        format: 'f32-planar',
+        sampleRate,
+        numberOfFrames: frames,
+        numberOfChannels,
+        timestamp: Math.round(offset / sampleRate * 1e6),
+        data: planar,
+      });
+      encoder.encode(audioData);
+      audioData.close();
+      while (encoder.encodeQueueSize > 10) await new Promise(r => setTimeout(r, 5));
+    }
+    await encoder.flush();
+    encoder.close();
+  }
+
+  // Probes AudioEncoder support once per export click — tries AAC first
+  // (more broadly compatible for MP4 playback), falls back to Opus-in-MP4
+  // if AAC encoding isn't available (as of this writing, some Chromium
+  // builds support WebCodecs Opus encoding but not AAC encoding).
+  async function pickAudioCodec(buf) {
+    if (!window.AudioEncoder) return null;
+    const base = { sampleRate: buf.sampleRate, numberOfChannels: buf.numberOfChannels, bitrate: 128000 };
+    try {
+      const aac = await AudioEncoder.isConfigSupported({ codec: 'mp4a.40.2', ...base });
+      if (aac.supported) return 'aac';
+    } catch {}
+    try {
+      const opus = await AudioEncoder.isConfigSupported({ codec: 'opus', ...base });
+      if (opus.supported) return 'opus';
+    } catch {}
+    return null;
+  }
 
   // ── Export helpers ────────────────────────────────────────────────────────
   function exportDone(blob, ext, fps, dur) {
@@ -2720,7 +2855,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (cycleN >= 2) regenerateBaseAngles();
 
     const fps   = Math.max(1, parseInt(document.getElementById('fpsIn').value)  || 60);
-    const durCap = loadedVideo ? Math.min(120, Math.max(1, Math.floor(videoDuration))) : 120;
+    const durCap = loadedVideo ? Math.min(120, Math.max(1, Math.ceil(videoDuration))) : 120;
     const dur   = Math.max(1, Math.min(durCap, parseInt(document.getElementById('durIn').value) || 5));
     const total = fps * dur;
     const fmt   = document.getElementById('formatSel').value;
@@ -2793,13 +2928,23 @@ function buildGIF(w, h, frames, delayCs) {
         stopAll(); setStatus('H.264エンコーダーが見つかりません'); return;
       }
 
+      let audioCodec = null;
+      if (loadedAudioBuffer) {
+        audioCodec = await pickAudioCodec(loadedAudioBuffer);
+        if (!audioCodec) setStatus('音声エンコーダーが見つからないため、音声なしで書き出します');
+      }
+
       const { Muxer, ArrayBufferTarget } = window.Mp4Muxer;
       const target = new ArrayBufferTarget();
-      const muxer  = new Muxer({
+      const muxerOpts = {
         target,
         video: { codec: 'avc', width: imgW, height: imgH },
         fastStart: 'in-memory',
-      });
+      };
+      if (audioCodec) {
+        muxerOpts.audio = { codec: audioCodec, numberOfChannels: loadedAudioBuffer.numberOfChannels, sampleRate: loadedAudioBuffer.sampleRate };
+      }
+      const muxer = new Muxer(muxerOpts);
 
       const encoder = new VideoEncoder({
         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
@@ -2834,6 +2979,10 @@ function buildGIF(w, h, frames, delayCs) {
         }
         if (!exporting) return;
         await encoder.flush();
+        if (audioCodec) {
+          setStatus('音声をエンコード中...');
+          await muxAudioTrack(muxer, audioCodec, dur);
+        }
         muxer.finalize();
         exporting = false;
         exportDone(new Blob([target.buffer], { type: 'video/mp4' }), 'mp4', fps, dur);
@@ -2844,13 +2993,25 @@ function buildGIF(w, h, frames, delayCs) {
       const codecs = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
       const mime   = codecs.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
 
-      const stream   = canvas.captureStream(fps);
+      const stream = canvas.captureStream(fps);
+      let audioCtxForExport = null, audioSrcForExport = null;
+      if (loadedAudioBuffer) {
+        audioCtxForExport = new (window.AudioContext || window.webkitAudioContext)();
+        audioSrcForExport = audioCtxForExport.createBufferSource();
+        audioSrcForExport.buffer = loadedAudioBuffer;
+        const dest = audioCtxForExport.createMediaStreamDestination();
+        audioSrcForExport.connect(dest);
+        dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+        audioSrcForExport.start(0);
+      }
       const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
       const chunks   = [];
 
       recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
       recorder.onstop = () => {
         clearInterval(expInterval); expInterval = null;
+        if (audioSrcForExport) { try { audioSrcForExport.stop(); } catch {} }
+        if (audioCtxForExport) audioCtxForExport.close();
         exporting = false;
         exportDone(new Blob(chunks, { type: mime.split(';')[0] }), 'webm', fps, dur);
       };
