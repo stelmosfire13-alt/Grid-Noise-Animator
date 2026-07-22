@@ -2083,10 +2083,16 @@ function buildGIF(w, h, frames, delayCs) {
   }
 
   // ── Export helpers ────────────────────────────────────────────────────────
+  function exportFilenameStamp() {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  }
+
   function exportDone(blob, ext, fps, dur) {
     const url = URL.createObjectURL(blob);
     const a   = Object.assign(document.createElement('a'), {
-      href: url, download: `grid-noise-${Date.now()}.${ext}`
+      href: url, download: `grid-noise-${exportFilenameStamp()}.${ext}`
     });
     document.body.appendChild(a); a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 2000);
