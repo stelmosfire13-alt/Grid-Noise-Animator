@@ -2785,7 +2785,7 @@ function buildGIF(w, h, frames, delayCs) {
       // match the export duration to the audio's length.
       const durInEl = document.getElementById('durIn');
       const maxDur = +durInEl.max || 120;
-      durInEl.value = Math.min(Math.max(1, Math.round(buf.duration)), maxDur);
+      durInEl.value = Math.min(Math.max(1, Math.ceil(buf.duration)), maxDur);
       setStatus(`音声読み込み完了: ${file.name}`);
     } catch (e) {
       loadedAudioBuffer = null; loadedAudioName = '';

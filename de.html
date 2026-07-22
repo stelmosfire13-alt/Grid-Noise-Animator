@@ -2014,7 +2014,7 @@ function buildGIF(w, h, frames, delayCs) {
       document.getElementById('audioInfoText').textContent = `${file.name} (${buf.duration.toFixed(1)}Sek)`;
       const durInEl = document.getElementById('durIn');
       const maxDur = +durInEl.max || 120;
-      durInEl.value = Math.min(Math.max(1, Math.round(buf.duration)), maxDur);
+      durInEl.value = Math.min(Math.max(1, Math.ceil(buf.duration)), maxDur);
       setStatus(`Audio geladen: ${file.name}`);
     } catch (e) {
       loadedAudioBuffer = null; loadedAudioName = '';
