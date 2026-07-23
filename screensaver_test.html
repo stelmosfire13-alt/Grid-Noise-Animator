@@ -871,12 +871,25 @@ function buildGIF(w, h, frames, delayCs) {
     updateMLResistance();
   };
 
+  // Defaults the export duration to exactly one screensaver cycle, so a
+  // straight "export" click produces a video that loops seamlessly back to
+  // its starting frame. Only nudges durIn when screensaver is the one driving
+  // it (on enable, and while it stays checked as the period slider moves) —
+  // it never touches durIn while screensaver is off.
+  function syncDurToPeriod() {
+    const durInEl = document.getElementById('durIn');
+    const maxDur = +durInEl.max || 120;
+    durInEl.value = Math.min(+sswPeriodS.value, maxDur);
+  }
+
   sswChk.addEventListener('change', () => {
     sswField.style.display = sswChk.checked ? 'block' : 'none';
+    if (sswChk.checked) syncDurToPeriod();
     redrawIfStopped();
   });
   sswPeriodS.addEventListener('input', () => {
     document.getElementById('sswPeriodV').textContent = sswPeriodS.value + ' 秒';
+    if (sswChk.checked) syncDurToPeriod();
     redrawIfStopped();
   });
   sswScaleS.addEventListener('input', () => {
@@ -1720,7 +1733,7 @@ function buildGIF(w, h, frames, delayCs) {
       document.getElementById('videoModeInfo').textContent =
         `${video.videoWidth}×${video.videoHeight}, ${videoDuration.toFixed(1)}秒`;
       const durIn = document.getElementById('durIn');
-      const maxDur = Math.max(1, Math.floor(videoDuration));
+      const maxDur = Math.max(1, Math.ceil(videoDuration));
       durIn.max = maxDur;
       if (+durIn.value > maxDur) durIn.value = maxDur;
       updateOrientResetBtn();
@@ -2686,10 +2699,16 @@ function buildGIF(w, h, frames, delayCs) {
   pauseBtn.addEventListener('click', stopPlay);
 
   // ── Export helpers ────────────────────────────────────────────────────────
+  function exportFilenameStamp() {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  }
+
   function exportDone(blob, ext, fps, dur) {
     const url = URL.createObjectURL(blob);
     const a   = Object.assign(document.createElement('a'), {
-      href: url, download: `grid-noise-${Date.now()}.${ext}`
+      href: url, download: `grid-noise-${exportFilenameStamp()}.${ext}`
     });
     document.body.appendChild(a); a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 2000);
@@ -2707,7 +2726,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (cycleN >= 2) regenerateBaseAngles();
 
     const fps   = Math.max(1, parseInt(document.getElementById('fpsIn').value)  || 60);
-    const durCap = loadedVideo ? Math.min(120, Math.max(1, Math.floor(videoDuration))) : 120;
+    const durCap = loadedVideo ? Math.min(120, Math.max(1, Math.ceil(videoDuration))) : 120;
     const dur   = Math.max(1, Math.min(durCap, parseInt(document.getElementById('durIn').value) || 5));
     const total = fps * dur;
     const fmt   = document.getElementById('formatSel').value;
