@@ -641,6 +641,10 @@ function buildGIF(w, h, frames, delayCs) {
     canvas.style.width  = (imgW * scale) + 'px';
     canvas.style.height = (imgH * scale) + 'px';
   }
+  function syncPreviewAspect() {
+    if (!imgW || !imgH) return;
+    previewPane.style.aspectRatio = window.innerWidth <= 680 ? `${imgW} / ${imgH}` : '';
+  }
   function syncPreviewSize() {
     syncCanvasSize();
     syncOverlaySize();
@@ -1319,6 +1323,7 @@ function buildGIF(w, h, frames, delayCs) {
     w = Math.max(COLS, Math.round(w / COLS) * COLS);
     h = Math.max(ROWS, Math.round(h / ROWS) * ROWS);
     imgW = w; imgH = h;
+    syncPreviewAspect();
 
     canvas.width = w; canvas.height = h;
 
@@ -1985,7 +1990,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (!playing && hslBuf) { drawNoise(); applyRegionMask(); }
   });
 
-  window.addEventListener('resize', syncOverlaySize);
+  window.addEventListener('resize', () => { syncPreviewAspect(); syncOverlaySize(); });
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function setStatus(msg) { stEl.textContent = msg; }
