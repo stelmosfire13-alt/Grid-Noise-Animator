@@ -40,7 +40,9 @@
     .fx-card,
     .ctrl-card,
     .out-card    { grid-column: 1; }
-    .preview-col  { grid-column: 2; grid-row: 1 / 99; display: flex; flex-direction: column; gap: 8px; }
+    /* min-width:0 stops preview-pane's manual resize from forcing the grid
+       track (and the whole page) wider. */
+    .preview-col  { grid-column: 2; grid-row: 1 / 99; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 
     @media (max-width: 680px) {
       body { padding: 10px 12px; }
@@ -56,13 +58,14 @@
 
       .upload-card  { order: 1; }
       .preview-col  { order: 2; }
-      .preview-pane { min-height: 200px; }
+      .preview-col .preview-pane { width: 100%; height: auto; aspect-ratio: 4 / 3; min-height: 200px; }
       .ctrl-card    { order: 3; }
       .grid-card    { order: 4; }
       .fx-card      { order: 5; }
       .out-card     { order: 6; }
 
-      #mainCanvas   { max-height: 48vh; }
+      /* 指でつまみやすいよう、プレビューのリサイズ用グリップを拡大 */
+      .resize-grip { display: none; }
 
       .btn { padding: 11px 14px; font-size: 0.88rem; min-height: 44px; }
       input[type=range] { height: 28px; touch-action: none; }
@@ -166,15 +169,43 @@
       background: #000;
       border: 1px solid var(--border);
       border-radius: 10px;
-      overflow: hidden;
+      overflow: auto;
       display: flex; align-items: center; justify-content: center;
-      min-height: clamp(200px, 55vw, 420px);
+      width: min(100%, 62vw);
+      height: clamp(200px, 55vw, 640px);
+      min-width: 220px;
+      min-height: 160px;
+      max-width: 98vw;
       position: relative;
-      flex: 1;
+      flex: none;
+      align-self: flex-start;
+    }
+    .resize-grip {
+      position: absolute; right: 0; bottom: 0;
+      width: 0; height: 0;
+      border-style: solid;
+      border-width: 0 0 18px 18px;
+      border-color: transparent transparent rgba(255,255,255,0.35) transparent;
+      cursor: nwse-resize;
+      z-index: 5;
+      touch-action: none;
+    }
+    .resize-grip:hover { border-bottom-color: rgba(255,255,255,0.65); }
+    .resize-size-label {
+      position: absolute;
+      right: 6px; bottom: 22px;
+      background: rgba(0,0,0,0.65);
+      color: #fff;
+      font-size: 0.68rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      pointer-events: none;
+      z-index: 6;
+      display: none;
+      white-space: nowrap;
     }
     #mainCanvas {
       display: none;
-      max-width: 100%; max-height: 76vh;
       image-rendering: pixelated;
     }
     .preview-empty { color: var(--muted); font-size: 0.85rem; }
@@ -441,6 +472,8 @@
       <canvas id="mainCanvas"></canvas>
       <canvas id="regionOverlay"></canvas>
       <div class="badge" id="badge"></div>
+      <div class="resize-grip" id="resizeGrip" title="Glisser pour redimensionner l'aperçu"></div>
+      <div class="resize-size-label" id="resizeSizeLabel"></div>
       </div>
       <div style="display:flex;gap:7px;margin-top:2px;">
         <button class="btn btn-blue" id="playBtn" disabled style="flex:1;">▶ Lecture</button>
@@ -612,6 +645,77 @@ function buildGIF(w, h, frames, delayCs) {
   const badge    = document.getElementById('badge');
   const canvas   = document.getElementById('mainCanvas');
   const ctx      = canvas.getContext('2d');
+
+  const previewPane = document.querySelector('.preview-pane');
+  function syncCanvasSize() {
+    if (!imgW || !imgH) return;
+    const boxW = previewPane.clientWidth, boxH = previewPane.clientHeight;
+    if (!boxW || !boxH) return;
+    const scale = Math.min(boxW / imgW, boxH / imgH);
+    canvas.style.width  = (imgW * scale) + 'px';
+    canvas.style.height = (imgH * scale) + 'px';
+  }
+  function syncPreviewAspect() {
+    if (!imgW || !imgH) return;
+    previewPane.style.aspectRatio = window.innerWidth <= 680 ? `${imgW} / ${imgH}` : '';
+  }
+  function syncPreviewSize() {
+    syncCanvasSize();
+    syncOverlaySize();
+  }
+  new ResizeObserver(syncPreviewSize).observe(previewPane);
+
+  const resizeGrip = document.getElementById('resizeGrip');
+  const resizeSizeLabel = document.getElementById('resizeSizeLabel');
+  function updateResizeSizeLabel() {
+    const w = Math.round(parseFloat(canvas.style.width)  || 0);
+    const h = Math.round(parseFloat(canvas.style.height) || 0);
+    resizeSizeLabel.textContent = `${w} × ${h} px`;
+  }
+  function beginResize(startX, startY) {
+    const rect = previewPane.getBoundingClientRect();
+    const startW = rect.width, startH = rect.height;
+    const maxW = window.innerWidth * 2.5;
+    const maxH = window.innerHeight * 5;
+    resizeSizeLabel.style.display = 'block';
+    updateResizeSizeLabel();
+    function apply(clientX, clientY) {
+      const w = Math.min(maxW, Math.max(220, startW + (clientX - startX)));
+      const h = Math.min(maxH, Math.max(160, startH + (clientY - startY)));
+      previewPane.style.width  = w + 'px';
+      previewPane.style.height = h + 'px';
+      syncCanvasSize();
+      updateResizeSizeLabel();
+    }
+    function onMouseMove(ev) { apply(ev.clientX, ev.clientY); }
+    function onTouchMove(ev) {
+      ev.preventDefault();
+      const t = ev.touches[0];
+      apply(t.clientX, t.clientY);
+    }
+    function cleanup() {
+      resizeSizeLabel.style.display = 'none';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', cleanup);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', cleanup);
+      document.removeEventListener('touchcancel', cleanup);
+    }
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', cleanup);
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', cleanup);
+    document.addEventListener('touchcancel', cleanup);
+  }
+  resizeGrip.addEventListener('mousedown', e => {
+    e.preventDefault();
+    beginResize(e.clientX, e.clientY);
+  });
+  resizeGrip.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    beginResize(t.clientX, t.clientY);
+  }, { passive: false });
   const hueS     = document.getElementById('hueS');
   const litS     = document.getElementById('litS');
   const satS     = document.getElementById('satS');
@@ -1244,6 +1348,7 @@ function buildGIF(w, h, frames, delayCs) {
     w = Math.max(COLS, Math.round(w / COLS) * COLS);
     h = Math.max(ROWS, Math.round(h / ROWS) * ROWS);
     imgW = w; imgH = h;
+    syncPreviewAspect();
 
     canvas.width = w; canvas.height = h;
 
@@ -1277,6 +1382,7 @@ function buildGIF(w, h, frames, delayCs) {
     }
 
     canvas.style.display = 'block';
+    syncCanvasSize();
     emptyMsg.style.display = 'none';
     drawOriginal();
     playBtn.disabled = false;
@@ -1909,7 +2015,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (!playing && hslBuf) { drawNoise(); applyRegionMask(); }
   });
 
-  window.addEventListener('resize', syncOverlaySize);
+  window.addEventListener('resize', () => { syncPreviewAspect(); syncOverlaySize(); });
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function setStatus(msg) { stEl.textContent = msg; }
