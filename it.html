@@ -191,6 +191,19 @@
       touch-action: none;
     }
     .resize-grip:hover { border-bottom-color: rgba(255,255,255,0.65); }
+    .resize-size-label {
+      position: absolute;
+      right: 6px; bottom: 22px;
+      background: rgba(0,0,0,0.65);
+      color: #fff;
+      font-size: 0.68rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      pointer-events: none;
+      z-index: 6;
+      display: none;
+      white-space: nowrap;
+    }
     #mainCanvas {
       display: none;
       image-rendering: pixelated;
@@ -460,6 +473,7 @@
       <canvas id="regionOverlay"></canvas>
       <div class="badge" id="badge"></div>
       <div class="resize-grip" id="resizeGrip" title="Trascina per ridimensionare l'anteprima"></div>
+      <div class="resize-size-label" id="resizeSizeLabel"></div>
       </div>
       <div style="display:flex;gap:7px;margin-top:2px;">
         <button class="btn btn-blue" id="playBtn" disabled style="flex:1;">▶ Riproduci</button>
@@ -652,16 +666,26 @@ function buildGIF(w, h, frames, delayCs) {
   new ResizeObserver(syncPreviewSize).observe(previewPane);
 
   const resizeGrip = document.getElementById('resizeGrip');
+  const resizeSizeLabel = document.getElementById('resizeSizeLabel');
+  function updateResizeSizeLabel() {
+    const w = Math.round(parseFloat(canvas.style.width)  || 0);
+    const h = Math.round(parseFloat(canvas.style.height) || 0);
+    resizeSizeLabel.textContent = `${w} × ${h} px`;
+  }
   function beginResize(startX, startY) {
     const rect = previewPane.getBoundingClientRect();
     const startW = rect.width, startH = rect.height;
     const maxW = window.innerWidth * 2.5;
     const maxH = window.innerHeight * 5;
+    resizeSizeLabel.style.display = 'block';
+    updateResizeSizeLabel();
     function apply(clientX, clientY) {
       const w = Math.min(maxW, Math.max(220, startW + (clientX - startX)));
       const h = Math.min(maxH, Math.max(160, startH + (clientY - startY)));
       previewPane.style.width  = w + 'px';
       previewPane.style.height = h + 'px';
+      syncCanvasSize();
+      updateResizeSizeLabel();
     }
     function onMouseMove(ev) { apply(ev.clientX, ev.clientY); }
     function onTouchMove(ev) {
@@ -670,6 +694,7 @@ function buildGIF(w, h, frames, delayCs) {
       apply(t.clientX, t.clientY);
     }
     function cleanup() {
+      resizeSizeLabel.style.display = 'none';
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', cleanup);
       document.removeEventListener('touchmove', onTouchMove);
