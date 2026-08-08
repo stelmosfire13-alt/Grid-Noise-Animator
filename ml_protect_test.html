@@ -503,8 +503,8 @@
         <div id="sswField" style="display:none;margin-top:8px;">
           <div class="field-label">周期 <em id="sswPeriodV">8 秒</em></div>
           <input type="range" id="sswPeriodS" min="3" max="30" value="8">
-          <div class="field-label" style="margin-top:6px;">縮小率 <em id="sswScaleV">85%</em></div>
-          <input type="range" id="sswScaleS" min="50" max="95" value="85">
+          <div class="field-label" style="margin-top:6px;">サイズ <em id="sswScaleV">85%</em></div>
+          <input type="range" id="sswScaleS" min="50" max="150" value="85">
           <div style="font-size:0.68rem;color:#777;margin-top:4px;line-height:1.4;">画像全体をDVDスクリーンセイバー風に動かします。周期の秒数ごとに必ず元の位置（中央）に戻ります。</div>
         </div>
       </div>
@@ -1395,7 +1395,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   function applyScreensaver(tSec) {
     const period = Math.max(1, +sswPeriodS.value || 8);
-    const scale  = Math.min(0.98, Math.max(0.5, (+sswScaleS.value || 85) / 100));
+    const scale  = Math.min(1.5, Math.max(0.5, (+sswScaleS.value || 85) / 100));
     const rx = imgW * (1 - scale) / 2;
     const ry = imgH * (1 - scale) / 2;
     const baseX = rx, baseY = ry; // resting (t=0) position: centered
