@@ -399,8 +399,8 @@
         <div id="sswField" style="display:none;margin-top:8px;">
           <div class="field-label">주기 <em id="sswPeriodV">8 초</em></div>
           <input type="range" id="sswPeriodS" min="3" max="30" value="8">
-          <div class="field-label" style="margin-top:6px;">축소율 <em id="sswScaleV">85%</em></div>
-          <input type="range" id="sswScaleS" min="50" max="95" value="85">
+          <div class="field-label" style="margin-top:6px;">크기 <em id="sswScaleV">85%</em></div>
+          <input type="range" id="sswScaleS" min="50" max="150" value="85">
           <div style="font-size:0.68rem;color:#777;margin-top:4px;line-height:1.4;">이미지 전체를 DVD 스크린세이버처럼 움직입니다. 주기(초)마다 반드시 원래 위치(중앙)로 정확히 돌아옵니다.</div>
         </div>
       </div>
@@ -1166,7 +1166,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   function applyScreensaver(tSec) {
     const period = Math.max(1, +sswPeriodS.value || 8);
-    const scale  = Math.min(0.98, Math.max(0.5, (+sswScaleS.value || 85) / 100));
+    const scale  = Math.min(1.5, Math.max(0.5, (+sswScaleS.value || 85) / 100));
     const rx = imgW * (1 - scale) / 2;
     const ry = imgH * (1 - scale) / 2;
     const baseX = rx, baseY = ry;
