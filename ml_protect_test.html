@@ -584,9 +584,38 @@
         <button class="btn btn-gray" id="pauseBtn" disabled style="flex:1;">■ 停止</button>
       </div>
       <div id="regionControls" style="display:none;flex-wrap:wrap;gap:5px;margin-top:6px;">
+        <button class="btn btn-gray" id="applyModeBtn" style="flex:1;font-size:0.82rem;">● 外側に適用</button>
         <button class="btn btn-gray" id="drawRegionBtn" style="flex:1;font-size:0.82rem;">✏ 範囲指定</button>
-        <button class="btn btn-gray" id="clearRegionBtn" style="flex:1;font-size:0.82rem;">✕ 消去</button>
-        <button class="btn btn-gray" id="applyModeBtn" style="width:100%;font-size:0.82rem;">● 外側に適用</button>
+        <button class="btn btn-gray" id="clearRegionBtn" style="flex:1;font-size:0.82rem;">✕ 範囲消去</button>
+        <button class="btn btn-gray" id="paintModeBtn" style="width:100%;font-size:0.82rem;">🖌 お絵描き</button>
+      </div>
+      <div id="paintControls" style="display:none;flex-direction:column;gap:8px;margin-top:6px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <input type="color" id="paintColorS" value="#000000" style="width:32px;height:28px;padding:0;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:none;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--muted);">太さ</label>
+            <input type="range" id="paintSizeS" min="1" max="60" value="6" style="width:80px;">
+            <em id="paintSizeV" style="font-style:normal;font-size:12px;">6px</em>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--muted);">不透明度</label>
+            <input type="range" id="paintAlphaS" min="10" max="100" value="100" style="width:80px;">
+            <em id="paintAlphaV" style="font-style:normal;font-size:12px;">100%</em>
+          </div>
+          <select id="paintBlendS" style="padding:5px 6px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+            <option value="source-over">通常</option>
+            <option value="multiply">乗算</option>
+            <option value="darken">暗い色優先</option>
+            <option value="lighten">明るい色優先</option>
+          </select>
+          <button type="button" class="btn btn-gray" id="paintEraserBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">消しゴム</button>
+          <button type="button" class="btn btn-gray" id="paintUndoBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">↩ 元に戻す</button>
+          <button type="button" class="btn btn-gray" id="paintClearBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🗑 描画を消す</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <input type="text" id="paintTextS" placeholder="テキストを入力" maxlength="40" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+          <button type="button" class="btn btn-gray" id="paintTextModeBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔤 文字を置く</button>
+        </div>
       </div>
       <div id="mlStats" style="display:none;padding-top:5px;font-size:0.73rem;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
@@ -1730,6 +1759,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   function loadFile(file) {
     stopAll();
+    if (paintMode) paintModeBtn.click(); // a real upload should land in the normal view, not the blank-canvas paint mode
     orientRotation = 0; orientFlipH = false; orientFlipV = false;
     if (file.type.startsWith('video/')) loadVideoFile(file);
     else loadImageFile(file);
@@ -1847,8 +1877,12 @@ function buildGIF(w, h, frames, delayCs) {
   // naturalWidth/naturalHeight; everything else here (drawImage, etc.) works
   // identically on both, so this one lookup is the only thing that needs to
   // branch on media type.
-  function mediaNaturalWidth(src)  { return src.videoWidth  || src.naturalWidth; }
-  function mediaNaturalHeight(src) { return src.videoHeight || src.naturalHeight; }
+  // The .width/.height fallback only ever kicks in for a plain <canvas>
+  // (used by initBlankCanvas, below) — a loaded <img>/<video> always has a
+  // truthy naturalWidth/videoWidth by the time this runs, so those media
+  // types are unaffected.
+  function mediaNaturalWidth(src)  { return src.videoWidth  || src.naturalWidth  || src.width; }
+  function mediaNaturalHeight(src) { return src.videoHeight || src.naturalHeight || src.height; }
 
   // Shared by processImage (initial load) and prepareVideoFrame (per export
   // frame) so the two never drift out of sync on how HSL gets computed.
@@ -1902,6 +1936,14 @@ function buildGIF(w, h, frames, delayCs) {
     const dw = rotated ? h : w, dh = rotated ? w : h; // pre-rotation draw size
     oc.drawImage(img, -dw / 2, -dh / 2, dw, dh);
     oc.restore();
+
+    // Snapshot for the paint tool's "clear my drawing" button (see below)
+    pristineCanvas = document.createElement('canvas');
+    pristineCanvas.width = w; pristineCanvas.height = h;
+    pristineCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
+    // A new image invalidates any pending single-level undo from the last one.
+    undoCanvas = null;
+    paintUndoBtn.disabled = true;
 
     // Convert every pixel to HSL and store in hslBuf
     const pixels = oc.getImageData(0, 0, w, h).data;
@@ -2527,7 +2569,7 @@ function buildGIF(w, h, frames, delayCs) {
   let drawMode   = false;
   let applyInside = false;
   const _rgOff     = '✏ 範囲指定';
-  const _rgOn      = '✏ 描画中…';
+  const _rgOn      = '✏ 範囲指定中…';
   const _rgOutside = '● 外側に適用';
   const _rgInside  = '● 内側に適用';
 
@@ -2545,9 +2587,49 @@ function buildGIF(w, h, frames, delayCs) {
     };
   }
 
+  // Same idea as overlayToImage(), but stops at overlay-canvas-pixel space
+  // instead of continuing on into image space — what drawBrushCursor()
+  // needs, since it draws directly on the overlay canvas.
+  function clientToOverlayPx(e) {
+    const or = overlay.getBoundingClientRect();
+    return {
+      x: (e.clientX - or.left) * overlay.width  / or.width,
+      y: (e.clientY - or.top)  * overlay.height / or.height,
+    };
+  }
+
+  // Dashed circle, brush-size preview at the cursor position (paint mode
+  // only — hidden during text mode, since a stamp's footprint isn't a
+  // circle). Two overlapping dash patterns in contrasting colors (dark +
+  // white, phase-offset) so the outline stays visible regardless of what's
+  // underneath.
+  function drawBrushCursor() {
+    const cr = canvas.getBoundingClientRect();
+    const or = overlay.getBoundingClientRect();
+    const scale = cr.width / imgW * overlay.width / or.width;
+    const r = Math.max(2, (+paintSizeS.value || 6) / 2 * scale);
+    octx.save();
+    octx.lineWidth = 1;
+    octx.setLineDash([4, 3]);
+    octx.strokeStyle = 'rgba(0,0,0,0.75)';
+    octx.beginPath();
+    octx.arc(paintCursorPos.x, paintCursorPos.y, r, 0, 6.2831853);
+    octx.stroke();
+    octx.lineDashOffset = 3.5;
+    octx.strokeStyle = 'rgba(255,255,255,0.9)';
+    octx.stroke();
+    octx.restore();
+  }
+
+  // paintMode/paintCursorPos/textMode are declared further down (see the
+  // "Drawing directly on the preview canvas" section) but referenced here —
+  // safe because this only ever runs in response to a later user gesture or
+  // processImage(), by which time the whole script has executed. Same
+  // pattern already used by loadFile() above.
   function drawRegionOverlay() {
     const ow = overlay.width, oh = overlay.height;
     octx.clearRect(0, 0, ow, oh);
+    if (paintMode && !textMode && paintCursorPos) drawBrushCursor();
     if (!drawMode) return;
     const cr = canvas.getBoundingClientRect();
     const or = overlay.getBoundingClientRect();
@@ -2647,22 +2729,56 @@ function buildGIF(w, h, frames, delayCs) {
     drawRegionOverlay();
   }
 
-  overlay.addEventListener('mousedown', e => startDraw(overlayToImage(e)));
-  overlay.addEventListener('mousemove', e => moveDraw(overlayToImage(e)));
-  overlay.addEventListener('mouseup',   () => endDraw());
+  // paintMode is declared further down (see "Drawing directly on the
+  // preview canvas" section) but referenced here — safe because these
+  // handlers only ever run in response to a later user gesture, by which
+  // time the whole script (including that declaration) has executed.
+  overlay.addEventListener('mousedown', e => {
+    const pos = overlayToImage(e);
+    if (paintMode) { if (textMode) stampText(pos); else startPaint(pos); } else startDraw(pos);
+  });
+  overlay.addEventListener('mousemove', e => {
+    const pos = overlayToImage(e);
+    if (paintMode) {
+      paintCursorPos = clientToOverlayPx(e);
+      movePaint(pos);
+      drawRegionOverlay(); // refreshes the brush cursor circle even when just hovering, not dragging
+    } else {
+      moveDraw(pos);
+    }
+  });
+  overlay.addEventListener('mouseleave', () => {
+    paintCursorPos = null;
+    if (paintMode) drawRegionOverlay();
+  });
+  overlay.addEventListener('mouseup', () => { if (paintMode) endPaint(); else endDraw(); });
 
   function touchPos(e) {
     const t = e.touches[0] || e.changedTouches[0];
     return overlayToImage({ clientX: t.clientX, clientY: t.clientY });
   }
-  overlay.addEventListener('touchstart', e => { if (!drawMode) return; e.preventDefault(); startDraw(touchPos(e)); }, { passive: false });
-  overlay.addEventListener('touchmove',  e => { if (!isDrawing) return; e.preventDefault(); moveDraw(touchPos(e)); },  { passive: false });
-  overlay.addEventListener('touchend',   e => { e.preventDefault(); endDraw(); }, { passive: false });
+  overlay.addEventListener('touchstart', e => {
+    if (!drawMode && !paintMode) return;
+    e.preventDefault();
+    const pos = touchPos(e);
+    if (paintMode) { if (textMode) stampText(pos); else startPaint(pos); } else startDraw(pos);
+  }, { passive: false });
+  overlay.addEventListener('touchmove', e => {
+    if (!isDrawing && !isPainting) return;
+    e.preventDefault();
+    const pos = touchPos(e);
+    if (paintMode) movePaint(pos); else moveDraw(pos);
+  }, { passive: false });
+  overlay.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (paintMode) endPaint(); else endDraw();
+  }, { passive: false });
 
   document.getElementById('drawRegionBtn').addEventListener('click', () => {
     drawMode = !drawMode;
     const btn = document.getElementById('drawRegionBtn');
     if (drawMode) {
+      if (paintMode) paintModeBtn.click(); // mutual exclusion, see paint section below
       btn.textContent = _rgOn;
       btn.style.color = 'var(--accent)';
       overlay.style.pointerEvents = 'auto';
@@ -3093,6 +3209,273 @@ function buildGIF(w, h, frames, delayCs) {
     }
   });
 
+  // ── Drawing directly on the preview canvas (test) ──────────────────────
+  // Paints straight onto origCanvas (the same source buffer processImage()
+  // builds from an upload) and incrementally patches hslBuf for just the
+  // touched region, so drawNoise()/drawOriginal() need no changes at all —
+  // a stroke is indistinguishable from "pixels that were already there".
+  // Reuses regionOverlay for pointer capture + overlayToImage() for
+  // coordinate mapping, exactly like region-select (see startDraw/endDraw
+  // above); paintMode and drawMode are mutually exclusive (each turns the
+  // other off via a delegated .click(), never the reverse, to avoid
+  // recursive toggling).
+  const paintModeBtn   = document.getElementById('paintModeBtn');
+  const paintControls  = document.getElementById('paintControls');
+  const paintColorS    = document.getElementById('paintColorS');
+  const paintSizeS     = document.getElementById('paintSizeS');
+  const paintSizeV     = document.getElementById('paintSizeV');
+  const paintAlphaS    = document.getElementById('paintAlphaS');
+  const paintAlphaV    = document.getElementById('paintAlphaV');
+  const paintBlendS    = document.getElementById('paintBlendS');
+  const paintEraserBtn   = document.getElementById('paintEraserBtn');
+  const paintUndoBtn     = document.getElementById('paintUndoBtn');
+  const paintClearBtn    = document.getElementById('paintClearBtn');
+  const paintTextS       = document.getElementById('paintTextS');
+  const paintTextModeBtn = document.getElementById('paintTextModeBtn');
+  const _pmOff = '🖌 お絵描き';
+  const _pmOn  = '🖌 お絵描き中…';
+  let paintMode = false, isPainting = false, paintLast = null, paintEraser = false, textMode = false;
+  let paintCursorPos = null; // overlay-canvas-pixel coords of the last known mouse position, for the brush-size cursor circle
+  let pristineCanvas = null; // snapshot taken at each processImage() call, for the "clear my drawing" button
+  let undoCanvas = null; // snapshot taken right before each committed paint action, for the single-level undo button
+
+  // Called right before origCanvas is about to be mutated by a committed
+  // paint action (stroke, text stamp, or "clear my drawing") — captures
+  // "how it looked a moment ago" so paintUndoBtn can put it back exactly
+  // once. Overwrites any previous snapshot, so only the most recent action
+  // is undoable (by design — the user asked for one level, not a history).
+  function snapshotForUndo() {
+    if (!undoCanvas) undoCanvas = document.createElement('canvas');
+    if (undoCanvas.width !== imgW || undoCanvas.height !== imgH) {
+      undoCanvas.width = imgW; undoCanvas.height = imgH;
+    }
+    undoCanvas.getContext('2d').clearRect(0, 0, imgW, imgH);
+    undoCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
+    paintUndoBtn.disabled = false;
+  }
+
+  function paintStrokeColor() { return paintEraser ? '#ffffff' : paintColorS.value; }
+  function paintAlpha() { return (+paintAlphaS.value || 100) / 100; }
+
+  // Recomputes hslBuf for a rectangular region (clamped to canvas bounds)
+  // instead of the whole image. Used by stampText (padded by the stamp's
+  // own measured bounding box) — brush strokes instead do one full-canvas
+  // recompute per stroke in endPaint(), see the scratch-layer comment above.
+  function refreshRegion(x, y, w, h) {
+    const rx = Math.max(0, Math.floor(x));
+    const ry = Math.max(0, Math.floor(y));
+    const rw = Math.min(imgW, Math.ceil(x + w)) - rx;
+    const rh = Math.min(imgH, Math.ceil(y + h)) - ry;
+    if (rw <= 0 || rh <= 0) return;
+    const oc2 = origCanvas.getContext('2d');
+    const pixels = oc2.getImageData(rx, ry, rw, rh).data;
+    for (let ly = 0; ly < rh; ly++) {
+      for (let lx = 0; lx < rw; lx++) {
+        const li = (ly * rw + lx) * 4;
+        const [hv, sv, lv] = rgbToHsl(pixels[li] / 255, pixels[li + 1] / 255, pixels[li + 2] / 255);
+        const gi = ((ry + ly) * imgW + (rx + lx)) * 3;
+        hslBuf[gi] = hv; hslBuf[gi + 1] = sv; hslBuf[gi + 2] = lv;
+      }
+    }
+    drawOriginal();
+  }
+
+  // A whole stroke (mousedown → mousemove* → mouseup) is drawn onto this
+  // scratch layer first, at full alpha in normal (source-over) mode — so
+  // overlapping segments within the same drag just paint the same opaque
+  // color over each other, with no visible change. The opacity/blend-mode
+  // controls are applied exactly once, when the finished layer is
+  // composited onto origCanvas in endPaint(). Without this, every segment
+  // of a slow/wiggly drag would re-blend (e.g. multiply) on top of the
+  // previous one, so a stroke could self-darken/self-multiply the longer
+  // you dragged — reported as "乗算モードで線を引くだけで色が濃くなる".
+  let strokeLayerCanvas = null;
+
+  function ensureStrokeLayer() {
+    if (!strokeLayerCanvas) strokeLayerCanvas = document.createElement('canvas');
+    if (strokeLayerCanvas.width !== imgW || strokeLayerCanvas.height !== imgH) {
+      strokeLayerCanvas.width = imgW; strokeLayerCanvas.height = imgH;
+    }
+  }
+
+  // Live feedback while the stroke is still in progress: show origCanvas
+  // with the in-progress layer composited on top (blend mode + opacity),
+  // without touching origCanvas itself — the real commit only happens once,
+  // in endPaint().
+  function previewStroke() {
+    ctx.drawImage(origCanvas, 0, 0);
+    ctx.globalAlpha = paintAlpha();
+    ctx.globalCompositeOperation = paintBlendS.value;
+    ctx.drawImage(strokeLayerCanvas, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function startPaint(pos) {
+    if (!paintMode || !hslBuf) return;
+    isPainting = true;
+    paintLast = pos;
+    ensureStrokeLayer();
+    const slc = strokeLayerCanvas.getContext('2d');
+    slc.clearRect(0, 0, imgW, imgH);
+    slc.fillStyle = paintStrokeColor();
+    slc.beginPath();
+    slc.arc(pos.x, pos.y, (+paintSizeS.value || 6) / 2, 0, 6.2831853);
+    slc.fill();
+    previewStroke();
+  }
+  function movePaint(pos) {
+    if (!isPainting) return;
+    const slc = strokeLayerCanvas.getContext('2d');
+    slc.strokeStyle = paintStrokeColor();
+    slc.lineWidth = +paintSizeS.value || 6;
+    slc.lineCap = 'round';
+    slc.lineJoin = 'round';
+    slc.beginPath();
+    slc.moveTo(paintLast.x, paintLast.y);
+    slc.lineTo(pos.x, pos.y);
+    slc.stroke();
+    paintLast = pos;
+    previewStroke();
+  }
+  function endPaint() {
+    if (!isPainting) return;
+    isPainting = false;
+    paintLast = null;
+    snapshotForUndo();
+    const oc2 = origCanvas.getContext('2d');
+    oc2.globalAlpha = paintAlpha();
+    oc2.globalCompositeOperation = paintBlendS.value;
+    oc2.drawImage(strokeLayerCanvas, 0, 0);
+    oc2.globalAlpha = 1;
+    oc2.globalCompositeOperation = 'source-over';
+    // One full recompute per stroke (not per segment) — see paintClearBtn
+    // below for the same pattern on a similarly one-off operation.
+    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    drawOriginal();
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    computeImageStats();
+    updateMLResistance();
+  }
+
+  // Font size is derived from the same brush-size slider used for the pen,
+  // rather than adding a second slider, to keep the toolbar minimal — a
+  // basic-tools scope call, same as skipping a dedicated eraser radius.
+  function stampText(pos) {
+    if (!paintMode || !hslBuf) return;
+    const text = paintTextS.value;
+    if (!text) return;
+    snapshotForUndo();
+    const oc2 = origCanvas.getContext('2d');
+    const fontSize = Math.max(8, (+paintSizeS.value || 6) * 4);
+    oc2.globalAlpha = paintAlpha();
+    oc2.globalCompositeOperation = paintBlendS.value;
+    oc2.font = `${fontSize}px sans-serif`;
+    oc2.textBaseline = 'alphabetic';
+    oc2.fillStyle = paintStrokeColor();
+    oc2.fillText(text, pos.x, pos.y);
+    oc2.globalAlpha = 1;
+    oc2.globalCompositeOperation = 'source-over';
+    const metrics = oc2.measureText(text);
+    const pad = 4;
+    refreshRegion(pos.x - pad, pos.y - fontSize - pad, metrics.width + pad * 2, fontSize + pad * 2);
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    computeImageStats();
+    updateMLResistance();
+  }
+
+  paintSizeS.addEventListener('input', () => {
+    paintSizeV.textContent = paintSizeS.value + 'px';
+    if (paintMode) drawRegionOverlay(); // resize the brush cursor circle immediately, without waiting for the next mousemove
+  });
+  paintAlphaS.addEventListener('input', () => { paintAlphaV.textContent = paintAlphaS.value + '%'; });
+
+  paintEraserBtn.addEventListener('click', () => {
+    paintEraser = !paintEraser;
+    paintEraserBtn.style.color = paintEraser ? 'var(--accent)' : '';
+    paintEraserBtn.textContent = paintEraser ? '✓ 消しゴム' : '消しゴム';
+  });
+
+  // Stays on until toggled off (like the eraser) so several words/labels
+  // can be stamped in a row without re-clicking; a click on the canvas
+  // stamps once rather than starting a brush stroke while this is active
+  // (see the pointerdown branching below).
+  paintTextModeBtn.addEventListener('click', () => {
+    textMode = !textMode;
+    paintTextModeBtn.style.color = textMode ? 'var(--accent)' : '';
+    paintTextModeBtn.textContent = textMode ? '✓ 文字を置く' : '🔤 文字を置く';
+    drawRegionOverlay(); // show/hide the brush cursor circle immediately, without waiting for the next mousemove
+  });
+
+  paintUndoBtn.addEventListener('click', () => {
+    if (!undoCanvas) return;
+    const oc2 = origCanvas.getContext('2d');
+    oc2.clearRect(0, 0, imgW, imgH);
+    oc2.drawImage(undoCanvas, 0, 0);
+    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    drawOriginal();
+    computeImageStats();
+    updateMLResistance();
+    undoCanvas = null;
+    paintUndoBtn.disabled = true; // single-level undo, not a history — consumed after one use
+  });
+
+  paintClearBtn.addEventListener('click', () => {
+    if (!pristineCanvas || !origCanvas) return;
+    snapshotForUndo();
+    const oc2 = origCanvas.getContext('2d');
+    oc2.clearRect(0, 0, imgW, imgH);
+    oc2.drawImage(pristineCanvas, 0, 0);
+    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    drawOriginal();
+    computeImageStats();
+    updateMLResistance();
+  });
+
+  paintModeBtn.addEventListener('click', () => {
+    paintMode = !paintMode;
+    if (paintMode) {
+      if (drawMode) document.getElementById('drawRegionBtn').click(); // mutual exclusion, see comment above
+      paintModeBtn.textContent = _pmOn;
+      paintModeBtn.style.color = 'var(--accent)';
+      overlay.style.pointerEvents = 'auto';
+      overlay.style.cursor = 'crosshair';
+      if (playing) stopPlay();
+      sswChk.disabled = true; sswPeriodS.disabled = true; sswScaleS.disabled = true;
+      paintControls.style.display = 'flex';
+      if (hslBuf) drawOriginal();
+    } else {
+      paintModeBtn.textContent = _pmOff;
+      paintModeBtn.style.color = '';
+      overlay.style.pointerEvents = 'none';
+      overlay.style.cursor = '';
+      sswChk.disabled = false; sswPeriodS.disabled = false; sswScaleS.disabled = false;
+      paintControls.style.display = 'none';
+      paintCursorPos = null;
+      drawRegionOverlay(); // pointerEvents:none stops interaction but not stale rendering — clear the cursor circle explicitly
+      redrawIfStopped();
+    }
+  });
+
+  // ── Blank canvas by default (test) ──────────────────────────────────────
+  // Before any upload, the preview pane shows a live, paintable white
+  // canvas instead of the "please load an image" placeholder — routed
+  // through the exact same processImage() an upload would use (see
+  // mediaNaturalWidth's .width/.height fallback above, which is what lets
+  // a plain <canvas> stand in for an <img>/<video> here).
+  function initBlankCanvas() {
+    const w = 480, h = 480;
+    const blank = document.createElement('canvas');
+    blank.width = w; blank.height = h;
+    const bctx = blank.getContext('2d');
+    bctx.fillStyle = '#fff';
+    bctx.fillRect(0, 0, w, h);
+    processImage(blank, '白紙');
+    paintModeBtn.click(); // start in paint mode — nothing else to do with a blank canvas yet
+  }
+  initBlankCanvas();
 })();
 </script>
 
