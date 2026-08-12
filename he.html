@@ -480,9 +480,38 @@
         <button class="btn btn-gray" id="pauseBtn" disabled style="flex:1;">■ עצור</button>
       </div>
       <div id="regionControls" style="display:none;flex-wrap:wrap;gap:5px;margin-top:6px;">
+        <button class="btn btn-gray" id="applyModeBtn" style="flex:1;font-size:0.82rem;">● מחוץ</button>
         <button class="btn btn-gray" id="drawRegionBtn" style="flex:1;font-size:0.82rem;">✏ סמן אזור</button>
-        <button class="btn btn-gray" id="clearRegionBtn" style="flex:1;font-size:0.82rem;">✕ נקה</button>
-        <button class="btn btn-gray" id="applyModeBtn" style="width:100%;font-size:0.82rem;">● מחוץ</button>
+        <button class="btn btn-gray" id="clearRegionBtn" style="flex:1;font-size:0.82rem;">✕ נקה אזור</button>
+        <button class="btn btn-gray" id="paintModeBtn" style="width:100%;font-size:0.82rem;">🖌 ציור</button>
+      </div>
+      <div id="paintControls" style="display:none;flex-direction:column;gap:8px;margin-top:6px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <input type="color" id="paintColorS" value="#000000" style="width:32px;height:28px;padding:0;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:none;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--muted);">עובי</label>
+            <input type="range" id="paintSizeS" min="1" max="60" value="6" style="width:80px;">
+            <em id="paintSizeV" style="font-style:normal;font-size:12px;">6px</em>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--muted);">אטימות</label>
+            <input type="range" id="paintAlphaS" min="10" max="100" value="100" style="width:80px;">
+            <em id="paintAlphaV" style="font-style:normal;font-size:12px;">100%</em>
+          </div>
+          <select id="paintBlendS" style="padding:5px 6px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+            <option value="source-over">רגיל</option>
+            <option value="multiply">הכפלה</option>
+            <option value="darken">החשכה</option>
+            <option value="lighten">הבהרה</option>
+          </select>
+          <button type="button" class="btn btn-gray" id="paintEraserBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">מחק</button>
+          <button type="button" class="btn btn-gray" id="paintUndoBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">↩ בטל</button>
+          <button type="button" class="btn btn-gray" id="paintClearBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🗑 נקה ציור</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <input type="text" id="paintTextS" placeholder="הזן טקסט" maxlength="40" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+          <button type="button" class="btn btn-gray" id="paintTextModeBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔤 הצב טקסט</button>
+        </div>
       </div>
       <div id="mlStats" style="display:none;padding-top:5px;font-size:0.73rem;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
@@ -1261,6 +1290,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   function loadFile(file) {
     stopAll();
+    if (paintMode) paintModeBtn.click();
     if (file.type.startsWith('video/')) loadVideoFile(file);
     else loadImageFile(file);
   }
@@ -1324,8 +1354,8 @@ function buildGIF(w, h, frames, delayCs) {
   }
 
   // ── Image processing ──────────────────────────────────────────────────────
-  function mediaNaturalWidth(src)  { return src.videoWidth  || src.naturalWidth; }
-  function mediaNaturalHeight(src) { return src.videoHeight || src.naturalHeight; }
+  function mediaNaturalWidth(src)  { return src.videoWidth  || src.naturalWidth  || src.width; }
+  function mediaNaturalHeight(src) { return src.videoHeight || src.naturalHeight || src.height; }
 
   function computeHslBuf(pixels, w, h) {
     const buf = new Float32Array(w * h * 3);
@@ -1356,6 +1386,12 @@ function buildGIF(w, h, frames, delayCs) {
     origCanvas.width = w; origCanvas.height = h;
     const oc = origCanvas.getContext('2d');
     oc.drawImage(img, 0, 0, w, h);
+
+    pristineCanvas = document.createElement('canvas');
+    pristineCanvas.width = w; pristineCanvas.height = h;
+    pristineCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
+    undoCanvas = null;
+    paintUndoBtn.disabled = true;
 
     const pixels = oc.getImageData(0, 0, w, h).data;
     hslBuf = computeHslBuf(pixels, w, h);
@@ -1850,7 +1886,7 @@ function buildGIF(w, h, frames, delayCs) {
   let drawMode   = false;
   let applyInside = false;
   const _rgOff     = '✏ סמן אזור';
-  const _rgOn      = '✏ מצייר… (גרור)';
+  const _rgOn      = '✏ מסמן אזור…';
   const _rgOutside = '● מחוץ';
   const _rgInside  = '● בפנים';
 
@@ -1868,9 +1904,36 @@ function buildGIF(w, h, frames, delayCs) {
     };
   }
 
+  function clientToOverlayPx(e) {
+    const or = overlay.getBoundingClientRect();
+    return {
+      x: (e.clientX - or.left) * overlay.width  / or.width,
+      y: (e.clientY - or.top)  * overlay.height / or.height,
+    };
+  }
+
+  function drawBrushCursor() {
+    const cr = canvas.getBoundingClientRect();
+    const or = overlay.getBoundingClientRect();
+    const scale = cr.width / imgW * overlay.width / or.width;
+    const r = Math.max(2, (+paintSizeS.value || 6) / 2 * scale);
+    octx.save();
+    octx.lineWidth = 1;
+    octx.setLineDash([4, 3]);
+    octx.strokeStyle = 'rgba(0,0,0,0.75)';
+    octx.beginPath();
+    octx.arc(paintCursorPos.x, paintCursorPos.y, r, 0, 6.2831853);
+    octx.stroke();
+    octx.lineDashOffset = 3.5;
+    octx.strokeStyle = 'rgba(255,255,255,0.9)';
+    octx.stroke();
+    octx.restore();
+  }
+
   function drawRegionOverlay() {
     const ow = overlay.width, oh = overlay.height;
     octx.clearRect(0, 0, ow, oh);
+    if (paintMode && !textMode && paintCursorPos) drawBrushCursor();
     if (!drawMode) return;
     const cr = canvas.getBoundingClientRect();
     const or = overlay.getBoundingClientRect();
@@ -1970,22 +2033,52 @@ function buildGIF(w, h, frames, delayCs) {
     drawRegionOverlay();
   }
 
-  overlay.addEventListener('mousedown', e => startDraw(overlayToImage(e)));
-  overlay.addEventListener('mousemove', e => moveDraw(overlayToImage(e)));
-  overlay.addEventListener('mouseup',   () => endDraw());
+  overlay.addEventListener('mousedown', e => {
+    const pos = overlayToImage(e);
+    if (paintMode) { if (textMode) stampText(pos); else startPaint(pos); } else startDraw(pos);
+  });
+  overlay.addEventListener('mousemove', e => {
+    const pos = overlayToImage(e);
+    if (paintMode) {
+      paintCursorPos = clientToOverlayPx(e);
+      movePaint(pos);
+      drawRegionOverlay();
+    } else {
+      moveDraw(pos);
+    }
+  });
+  overlay.addEventListener('mouseleave', () => {
+    paintCursorPos = null;
+    if (paintMode) drawRegionOverlay();
+  });
+  overlay.addEventListener('mouseup', () => { if (paintMode) endPaint(); else endDraw(); });
 
   function touchPos(e) {
     const t = e.touches[0] || e.changedTouches[0];
     return overlayToImage({ clientX: t.clientX, clientY: t.clientY });
   }
-  overlay.addEventListener('touchstart', e => { if (!drawMode) return; e.preventDefault(); startDraw(touchPos(e)); }, { passive: false });
-  overlay.addEventListener('touchmove',  e => { if (!isDrawing) return; e.preventDefault(); moveDraw(touchPos(e)); },  { passive: false });
-  overlay.addEventListener('touchend',   e => { e.preventDefault(); endDraw(); }, { passive: false });
+  overlay.addEventListener('touchstart', e => {
+    if (!drawMode && !paintMode) return;
+    e.preventDefault();
+    const pos = touchPos(e);
+    if (paintMode) { if (textMode) stampText(pos); else startPaint(pos); } else startDraw(pos);
+  }, { passive: false });
+  overlay.addEventListener('touchmove', e => {
+    if (!isDrawing && !isPainting) return;
+    e.preventDefault();
+    const pos = touchPos(e);
+    if (paintMode) movePaint(pos); else moveDraw(pos);
+  }, { passive: false });
+  overlay.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (paintMode) endPaint(); else endDraw();
+  }, { passive: false });
 
   document.getElementById('drawRegionBtn').addEventListener('click', () => {
     drawMode = !drawMode;
     const btn = document.getElementById('drawRegionBtn');
     if (drawMode) {
+      if (paintMode) paintModeBtn.click();
       btn.textContent = _rgOn;
       btn.style.color = 'var(--accent)';
       overlay.style.pointerEvents = 'auto';
@@ -2388,6 +2481,234 @@ function buildGIF(w, h, frames, delayCs) {
     }
   });
 
+  // ── Drawing directly on the preview canvas (test) ──────────────────────
+  const paintModeBtn   = document.getElementById('paintModeBtn');
+  const paintControls  = document.getElementById('paintControls');
+  const paintColorS    = document.getElementById('paintColorS');
+  const paintSizeS     = document.getElementById('paintSizeS');
+  const paintSizeV     = document.getElementById('paintSizeV');
+  const paintAlphaS    = document.getElementById('paintAlphaS');
+  const paintAlphaV    = document.getElementById('paintAlphaV');
+  const paintBlendS    = document.getElementById('paintBlendS');
+  const paintEraserBtn   = document.getElementById('paintEraserBtn');
+  const paintUndoBtn     = document.getElementById('paintUndoBtn');
+  const paintClearBtn    = document.getElementById('paintClearBtn');
+  const paintTextS       = document.getElementById('paintTextS');
+  const paintTextModeBtn = document.getElementById('paintTextModeBtn');
+  const _pmOff = '🖌 ציור';
+  const _pmOn  = '🖌 מצייר…';
+  let paintMode = false, isPainting = false, paintLast = null, paintEraser = false, textMode = false;
+  let paintCursorPos = null;
+  let pristineCanvas = null;
+  let undoCanvas = null;
+
+  function snapshotForUndo() {
+    if (!undoCanvas) undoCanvas = document.createElement('canvas');
+    if (undoCanvas.width !== imgW || undoCanvas.height !== imgH) {
+      undoCanvas.width = imgW; undoCanvas.height = imgH;
+    }
+    undoCanvas.getContext('2d').clearRect(0, 0, imgW, imgH);
+    undoCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
+    paintUndoBtn.disabled = false;
+  }
+
+  function paintStrokeColor() { return paintEraser ? '#ffffff' : paintColorS.value; }
+  function paintAlpha() { return (+paintAlphaS.value || 100) / 100; }
+
+  function refreshRegion(x, y, w, h) {
+    const rx = Math.max(0, Math.floor(x));
+    const ry = Math.max(0, Math.floor(y));
+    const rw = Math.min(imgW, Math.ceil(x + w)) - rx;
+    const rh = Math.min(imgH, Math.ceil(y + h)) - ry;
+    if (rw <= 0 || rh <= 0) return;
+    const oc2 = origCanvas.getContext('2d');
+    const pixels = oc2.getImageData(rx, ry, rw, rh).data;
+    for (let ly = 0; ly < rh; ly++) {
+      for (let lx = 0; lx < rw; lx++) {
+        const li = (ly * rw + lx) * 4;
+        const [hv, sv, lv] = rgbToHsl(pixels[li] / 255, pixels[li + 1] / 255, pixels[li + 2] / 255);
+        const gi = ((ry + ly) * imgW + (rx + lx)) * 3;
+        hslBuf[gi] = hv; hslBuf[gi + 1] = sv; hslBuf[gi + 2] = lv;
+      }
+    }
+    drawOriginal();
+  }
+
+  function refreshPaintedRegion(x0, y0, x1, y1) {
+    const pad = Math.ceil((+paintSizeS.value || 6) / 2) + 2;
+    const rx = Math.min(x0, x1) - pad, ry = Math.min(y0, y1) - pad;
+    refreshRegion(rx, ry, Math.max(x0, x1) - rx + pad, Math.max(y0, y1) - ry + pad);
+  }
+
+  let strokeLayerCanvas = null;
+
+  function ensureStrokeLayer() {
+    if (!strokeLayerCanvas) strokeLayerCanvas = document.createElement('canvas');
+    if (strokeLayerCanvas.width !== imgW || strokeLayerCanvas.height !== imgH) {
+      strokeLayerCanvas.width = imgW; strokeLayerCanvas.height = imgH;
+    }
+  }
+
+  function previewStroke() {
+    ctx.drawImage(origCanvas, 0, 0);
+    ctx.globalAlpha = paintAlpha();
+    ctx.globalCompositeOperation = paintBlendS.value;
+    ctx.drawImage(strokeLayerCanvas, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function startPaint(pos) {
+    if (!paintMode || !hslBuf) return;
+    isPainting = true;
+    paintLast = pos;
+    ensureStrokeLayer();
+    const slc = strokeLayerCanvas.getContext('2d');
+    slc.clearRect(0, 0, imgW, imgH);
+    slc.fillStyle = paintStrokeColor();
+    slc.beginPath();
+    slc.arc(pos.x, pos.y, (+paintSizeS.value || 6) / 2, 0, 6.2831853);
+    slc.fill();
+    previewStroke();
+  }
+  function movePaint(pos) {
+    if (!isPainting) return;
+    const slc = strokeLayerCanvas.getContext('2d');
+    slc.strokeStyle = paintStrokeColor();
+    slc.lineWidth = +paintSizeS.value || 6;
+    slc.lineCap = 'round';
+    slc.lineJoin = 'round';
+    slc.beginPath();
+    slc.moveTo(paintLast.x, paintLast.y);
+    slc.lineTo(pos.x, pos.y);
+    slc.stroke();
+    paintLast = pos;
+    previewStroke();
+  }
+  function endPaint() {
+    if (!isPainting) return;
+    isPainting = false;
+    paintLast = null;
+    snapshotForUndo();
+    const oc2 = origCanvas.getContext('2d');
+    oc2.globalAlpha = paintAlpha();
+    oc2.globalCompositeOperation = paintBlendS.value;
+    oc2.drawImage(strokeLayerCanvas, 0, 0);
+    oc2.globalAlpha = 1;
+    oc2.globalCompositeOperation = 'source-over';
+    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    drawOriginal();
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    computeImageStats();
+    updateMLResistance();
+  }
+
+  function stampText(pos) {
+    if (!paintMode || !hslBuf) return;
+    const text = paintTextS.value;
+    if (!text) return;
+    snapshotForUndo();
+    const oc2 = origCanvas.getContext('2d');
+    const fontSize = Math.max(8, (+paintSizeS.value || 6) * 4);
+    oc2.globalAlpha = paintAlpha();
+    oc2.globalCompositeOperation = paintBlendS.value;
+    oc2.font = `${fontSize}px sans-serif`;
+    oc2.textBaseline = 'alphabetic';
+    oc2.fillStyle = paintStrokeColor();
+    oc2.fillText(text, pos.x, pos.y);
+    oc2.globalAlpha = 1;
+    oc2.globalCompositeOperation = 'source-over';
+    const metrics = oc2.measureText(text);
+    const pad = 4;
+    refreshRegion(pos.x - pad, pos.y - fontSize - pad, metrics.width + pad * 2, fontSize + pad * 2);
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    computeImageStats();
+    updateMLResistance();
+  }
+
+  paintSizeS.addEventListener('input', () => {
+    paintSizeV.textContent = paintSizeS.value + 'px';
+    if (paintMode) drawRegionOverlay();
+  });
+  paintAlphaS.addEventListener('input', () => { paintAlphaV.textContent = paintAlphaS.value + '%'; });
+
+  paintEraserBtn.addEventListener('click', () => {
+    paintEraser = !paintEraser;
+    paintEraserBtn.style.color = paintEraser ? 'var(--accent)' : '';
+    paintEraserBtn.textContent = paintEraser ? '✓ מחק' : 'מחק';
+  });
+
+  paintTextModeBtn.addEventListener('click', () => {
+    textMode = !textMode;
+    paintTextModeBtn.style.color = textMode ? 'var(--accent)' : '';
+    paintTextModeBtn.textContent = textMode ? '✓ הצב טקסט' : '🔤 הצב טקסט';
+    drawRegionOverlay();
+  });
+
+  paintUndoBtn.addEventListener('click', () => {
+    if (!undoCanvas) return;
+    const oc2 = origCanvas.getContext('2d');
+    oc2.clearRect(0, 0, imgW, imgH);
+    oc2.drawImage(undoCanvas, 0, 0);
+    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    drawOriginal();
+    computeImageStats();
+    updateMLResistance();
+    undoCanvas = null;
+    paintUndoBtn.disabled = true;
+  });
+
+  paintClearBtn.addEventListener('click', () => {
+    if (!pristineCanvas || !origCanvas) return;
+    snapshotForUndo();
+    const oc2 = origCanvas.getContext('2d');
+    oc2.clearRect(0, 0, imgW, imgH);
+    oc2.drawImage(pristineCanvas, 0, 0);
+    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    drawOriginal();
+    computeImageStats();
+    updateMLResistance();
+  });
+
+  paintModeBtn.addEventListener('click', () => {
+    paintMode = !paintMode;
+    if (paintMode) {
+      if (drawMode) document.getElementById('drawRegionBtn').click();
+      paintModeBtn.textContent = _pmOn;
+      paintModeBtn.style.color = 'var(--accent)';
+      overlay.style.pointerEvents = 'auto';
+      overlay.style.cursor = 'crosshair';
+      if (playing) stopPlay();
+      sswChk.disabled = true; sswPeriodS.disabled = true; sswScaleS.disabled = true;
+      paintControls.style.display = 'flex';
+      if (hslBuf) drawOriginal();
+    } else {
+      paintModeBtn.textContent = _pmOff;
+      paintModeBtn.style.color = '';
+      overlay.style.pointerEvents = 'none';
+      overlay.style.cursor = '';
+      sswChk.disabled = false; sswPeriodS.disabled = false; sswScaleS.disabled = false;
+      paintControls.style.display = 'none';
+      paintCursorPos = null;
+      drawRegionOverlay();
+      redrawIfStopped();
+    }
+  });
+
+  // ── Blank canvas by default (test) ──────────────────────────────────────
+  function initBlankCanvas() {
+    const w = 480, h = 480;
+    const blank = document.createElement('canvas');
+    blank.width = w; blank.height = h;
+    const bctx = blank.getContext('2d');
+    bctx.fillStyle = '#fff';
+    bctx.fillRect(0, 0, w, h);
+    processImage(blank, 'דף ריק');
+    if (window.innerWidth > 680) paintModeBtn.click();
+  }
+  initBlankCanvas();
 })();
 </script>
 
