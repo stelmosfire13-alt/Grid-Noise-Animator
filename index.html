@@ -81,6 +81,11 @@
       .fx-card      { order: 5; }
       .out-card     { order: 6; }
 
+      /* モバイルでは.layoutの全カードが縦一列に積まれるため、最後の
+         .out-card(動画を出力ボタン)がサッカーゲーム埋め込みの直上に
+         隙間なく接してしまう — 1行ぶんの余白を空ける。 */
+      #soccer-embed { margin-top: 24px; }
+
       /* プレビューは既に画面幅いっぱいに表示されるため、手動リサイズは
          モバイルでは不要 — グリップごと非表示にする。 */
       .resize-grip { display: none; }
@@ -3615,7 +3620,11 @@ function buildGIF(w, h, frames, delayCs) {
     bctx.fillStyle = '#fff';
     bctx.fillRect(0, 0, w, h);
     processImage(blank, '白紙');
-    paintModeBtn.click(); // start in paint mode — nothing else to do with a blank canvas yet
+    // Desktop: nothing else to do with a blank canvas, so start drawing
+    // right away. Mobile: screen space is precious and the paint toolbar
+    // takes up a lot of it, so leave it opt-in (same 680px breakpoint used
+    // elsewhere for mobile-specific layout, e.g. syncPreviewAspect above).
+    if (window.innerWidth > 680) paintModeBtn.click();
   }
   initBlankCanvas();
 
