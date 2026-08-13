@@ -505,6 +505,8 @@
             <option value="lighten">变亮</option>
           </select>
           <button type="button" class="btn btn-gray" id="paintEraserBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">橡皮擦</button>
+          <button type="button" class="btn btn-gray" id="paintEyedropBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🎨 吸管</button>
+          <button type="button" class="btn btn-gray" id="paintFillBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🪣 填充</button>
           <button type="button" class="btn btn-gray" id="paintUndoBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">↩ 撤销</button>
           <button type="button" class="btn btn-gray" id="paintClearBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🗑 清除绘画</button>
         </div>
@@ -1390,7 +1392,7 @@ function buildGIF(w, h, frames, delayCs) {
     pristineCanvas = document.createElement('canvas');
     pristineCanvas.width = w; pristineCanvas.height = h;
     pristineCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
-    undoCanvas = null;
+    undoStack = [];
     paintUndoBtn.disabled = true;
 
     const pixels = oc.getImageData(0, 0, w, h).data;
@@ -1933,7 +1935,7 @@ function buildGIF(w, h, frames, delayCs) {
   function drawRegionOverlay() {
     const ow = overlay.width, oh = overlay.height;
     octx.clearRect(0, 0, ow, oh);
-    if (paintMode && !textMode && paintCursorPos) drawBrushCursor();
+    if (paintMode && paintTool === 'brush' && paintCursorPos) drawBrushCursor();
     if (!drawMode) return;
     const cr = canvas.getBoundingClientRect();
     const or = overlay.getBoundingClientRect();
@@ -2035,7 +2037,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   overlay.addEventListener('mousedown', e => {
     const pos = overlayToImage(e);
-    if (paintMode) { if (textMode) stampText(pos); else startPaint(pos); } else startDraw(pos);
+    if (paintMode) { routePaintClick(pos); } else startDraw(pos);
   });
   overlay.addEventListener('mousemove', e => {
     const pos = overlayToImage(e);
@@ -2061,7 +2063,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (!drawMode && !paintMode) return;
     e.preventDefault();
     const pos = touchPos(e);
-    if (paintMode) { if (textMode) stampText(pos); else startPaint(pos); } else startDraw(pos);
+    if (paintMode) { routePaintClick(pos); } else startDraw(pos);
   }, { passive: false });
   overlay.addEventListener('touchmove', e => {
     if (!isDrawing && !isPainting) return;
@@ -2491,24 +2493,29 @@ function buildGIF(w, h, frames, delayCs) {
   const paintAlphaV    = document.getElementById('paintAlphaV');
   const paintBlendS    = document.getElementById('paintBlendS');
   const paintEraserBtn   = document.getElementById('paintEraserBtn');
+  const paintEyedropBtn  = document.getElementById('paintEyedropBtn');
+  const paintFillBtn     = document.getElementById('paintFillBtn');
   const paintUndoBtn     = document.getElementById('paintUndoBtn');
   const paintClearBtn    = document.getElementById('paintClearBtn');
   const paintTextS       = document.getElementById('paintTextS');
   const paintTextModeBtn = document.getElementById('paintTextModeBtn');
   const _pmOff = '🖌 绘画';
   const _pmOn  = '🖌 绘画中…';
-  let paintMode = false, isPainting = false, paintLast = null, paintEraser = false, textMode = false;
+  let paintMode = false, isPainting = false, paintLast = null, paintEraser = false;
+  let paintTool = 'brush';
+  const _eraserOff = '橡皮擦';
+  const _eraserOn  = '✓ 橡皮擦';
   let paintCursorPos = null;
   let pristineCanvas = null;
-  let undoCanvas = null;
+  const MAX_UNDO = 3;
+  let undoStack = [];
 
   function snapshotForUndo() {
-    if (!undoCanvas) undoCanvas = document.createElement('canvas');
-    if (undoCanvas.width !== imgW || undoCanvas.height !== imgH) {
-      undoCanvas.width = imgW; undoCanvas.height = imgH;
-    }
-    undoCanvas.getContext('2d').clearRect(0, 0, imgW, imgH);
-    undoCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
+    const snap = document.createElement('canvas');
+    snap.width = imgW; snap.height = imgH;
+    snap.getContext('2d').drawImage(origCanvas, 0, 0);
+    undoStack.push(snap);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
     paintUndoBtn.disabled = false;
   }
 
@@ -2627,6 +2634,106 @@ function buildGIF(w, h, frames, delayCs) {
     computeImageStats();
     updateMLResistance();
   }
+  function routePaintClick(pos) {
+    if (paintTool === 'text') stampText(pos);
+    else if (paintTool === 'eyedrop') pickColor(pos);
+    else if (paintTool === 'fill') doFill(pos);
+    else startPaint(pos);
+  }
+
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+
+  function pickColor(pos) {
+    if (!paintMode || !origCanvas) return;
+    const x = Math.min(imgW - 1, Math.max(0, Math.floor(pos.x)));
+    const y = Math.min(imgH - 1, Math.max(0, Math.floor(pos.y)));
+    const d = origCanvas.getContext('2d').getImageData(x, y, 1, 1).data;
+    paintColorS.value = '#' + [d[0], d[1], d[2]].map(v => v.toString(16).padStart(2, '0')).join('');
+    if (paintEraser) {
+      paintEraser = false;
+      paintEraserBtn.style.color = '';
+      paintEraserBtn.textContent = _eraserOff;
+    }
+    togglePaintTool('eyedrop');
+  }
+
+  const FILL_TOLERANCE2 = 32 * 32;
+
+  function floodFillMask(x0, y0, data, w, h) {
+    const startIdx = (y0 * w + x0) * 4;
+    const r0 = data[startIdx], g0 = data[startIdx + 1], b0 = data[startIdx + 2];
+    const visited = new Uint8Array(w * h);
+    const mask = new Uint8Array(w * h);
+    const stack = new Int32Array(w * h);
+    let sp = 0;
+    stack[sp++] = y0 * w + x0;
+    visited[y0 * w + x0] = 1;
+    while (sp > 0) {
+      const p = stack[--sp];
+      const i4 = p * 4;
+      const dr = data[i4] - r0, dg = data[i4 + 1] - g0, db = data[i4 + 2] - b0;
+      if (dr * dr + dg * dg + db * db > FILL_TOLERANCE2) continue;
+      mask[p] = 1;
+      const px = p % w, py = (p / w) | 0;
+      if (px > 0)     { const q = p - 1; if (!visited[q]) { visited[q] = 1; stack[sp++] = q; } }
+      if (px < w - 1) { const q = p + 1; if (!visited[q]) { visited[q] = 1; stack[sp++] = q; } }
+      if (py > 0)     { const q = p - w; if (!visited[q]) { visited[q] = 1; stack[sp++] = q; } }
+      if (py < h - 1) { const q = p + w; if (!visited[q]) { visited[q] = 1; stack[sp++] = q; } }
+    }
+    return mask;
+  }
+
+  function doFill(pos) {
+    if (!paintMode || !hslBuf) return;
+    const x0 = Math.min(imgW - 1, Math.max(0, Math.floor(pos.x)));
+    const y0 = Math.min(imgH - 1, Math.max(0, Math.floor(pos.y)));
+    const oc2 = origCanvas.getContext('2d');
+    const src = oc2.getImageData(0, 0, imgW, imgH);
+    const mask = floodFillMask(x0, y0, src.data, imgW, imgH);
+    ensureStrokeLayer();
+    const slc = strokeLayerCanvas.getContext('2d');
+    slc.clearRect(0, 0, imgW, imgH);
+    const fillData = slc.createImageData(imgW, imgH);
+    const [fr, fg, fb] = hexToRgb(paintStrokeColor());
+    const fd = fillData.data;
+    for (let i = 0; i < imgW * imgH; i++) {
+      if (mask[i]) {
+        const i4 = i * 4;
+        fd[i4] = fr; fd[i4 + 1] = fg; fd[i4 + 2] = fb; fd[i4 + 3] = 255;
+      }
+    }
+    slc.putImageData(fillData, 0, 0);
+    snapshotForUndo();
+    oc2.globalAlpha = paintAlpha();
+    oc2.globalCompositeOperation = paintBlendS.value;
+    oc2.drawImage(strokeLayerCanvas, 0, 0);
+    oc2.globalAlpha = 1;
+    oc2.globalCompositeOperation = 'source-over';
+    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose();
+    drawOriginal();
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    computeImageStats();
+    updateMLResistance();
+  }
+
+  function updatePaintToolButtons() {
+    paintTextModeBtn.style.color = paintTool === 'text' ? 'var(--accent)' : '';
+    paintTextModeBtn.textContent = paintTool === 'text' ? '✓ 放置文字' : '🔤 放置文字';
+    paintEyedropBtn.style.color = paintTool === 'eyedrop' ? 'var(--accent)' : '';
+    paintEyedropBtn.textContent = paintTool === 'eyedrop' ? '✓ 吸管' : '🎨 吸管';
+    paintFillBtn.style.color = paintTool === 'fill' ? 'var(--accent)' : '';
+    paintFillBtn.textContent = paintTool === 'fill' ? '✓ 填充' : '🪣 填充';
+  }
+
+  function togglePaintTool(tool) {
+    paintTool = (paintTool === tool) ? 'brush' : tool;
+    updatePaintToolButtons();
+    drawRegionOverlay();
+  }
 
   paintSizeS.addEventListener('input', () => {
     paintSizeV.textContent = paintSizeS.value + 'px';
@@ -2640,26 +2747,23 @@ function buildGIF(w, h, frames, delayCs) {
     paintEraserBtn.textContent = paintEraser ? '✓ 橡皮擦' : '橡皮擦';
   });
 
-  paintTextModeBtn.addEventListener('click', () => {
-    textMode = !textMode;
-    paintTextModeBtn.style.color = textMode ? 'var(--accent)' : '';
-    paintTextModeBtn.textContent = textMode ? '✓ 放置文字' : '🔤 放置文字';
-    drawRegionOverlay();
-  });
+  paintTextModeBtn.addEventListener('click', () => togglePaintTool('text'));
+  paintEyedropBtn.addEventListener('click', () => togglePaintTool('eyedrop'));
+  paintFillBtn.addEventListener('click', () => togglePaintTool('fill'));
 
   paintUndoBtn.addEventListener('click', () => {
-    if (!undoCanvas) return;
+    if (!undoStack.length) return;
+    const snap = undoStack.pop();
     const oc2 = origCanvas.getContext('2d');
     oc2.clearRect(0, 0, imgW, imgH);
-    oc2.drawImage(undoCanvas, 0, 0);
+    oc2.drawImage(snap, 0, 0);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
     if (detailChk.checked) decompose();
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     drawOriginal();
     computeImageStats();
     updateMLResistance();
-    undoCanvas = null;
-    paintUndoBtn.disabled = true;
+    paintUndoBtn.disabled = undoStack.length === 0;
   });
 
   paintClearBtn.addEventListener('click', () => {

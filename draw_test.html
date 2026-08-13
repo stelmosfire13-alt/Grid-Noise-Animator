@@ -1235,6 +1235,8 @@
             <option value="lighten">明るい色優先</option>
           </select>
           <button type="button" class="btn btn-gray" id="paintEraserBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">消しゴム</button>
+          <button type="button" class="btn btn-gray" id="paintEyedropBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🎨 スポイト</button>
+          <button type="button" class="btn btn-gray" id="paintFillBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🪣 塗りつぶし</button>
           <button type="button" class="btn btn-gray" id="paintUndoBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">↩ 元に戻す</button>
           <button type="button" class="btn btn-gray" id="paintClearBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🗑 描画を消す</button>
         </div>
@@ -2202,8 +2204,8 @@ function buildGIF(w, h, frames, delayCs) {
     pristineCanvas = document.createElement('canvas');
     pristineCanvas.width = w; pristineCanvas.height = h;
     pristineCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
-    // A new image invalidates any pending single-level undo from the last one.
-    undoCanvas = null;
+    // A new image invalidates any pending undo history from the last one.
+    undoStack = [];
     paintUndoBtn.disabled = true;
 
     // Convert every pixel to HSL and store in hslBuf
@@ -2768,7 +2770,7 @@ function buildGIF(w, h, frames, delayCs) {
     octx.restore();
   }
 
-  // paintMode/paintCursorPos/textMode are declared further down (see the
+  // paintMode/paintCursorPos/paintTool are declared further down (see the
   // "Drawing directly on the preview canvas" section) but referenced here —
   // safe because this only ever runs in response to a later user gesture or
   // processImage(), by which time the whole script has executed. Same
@@ -2776,7 +2778,7 @@ function buildGIF(w, h, frames, delayCs) {
   function drawRegionOverlay() {
     const ow = overlay.width, oh = overlay.height;
     octx.clearRect(0, 0, ow, oh);
-    if (paintMode && !textMode && paintCursorPos) drawBrushCursor();
+    if (paintMode && paintTool === 'brush' && paintCursorPos) drawBrushCursor();
     if (!drawMode) return;
     const cr = canvas.getBoundingClientRect();
     const or = overlay.getBoundingClientRect();
@@ -2882,7 +2884,7 @@ function buildGIF(w, h, frames, delayCs) {
   // time the whole script (including that declaration) has executed.
   overlay.addEventListener('mousedown', e => {
     const pos = overlayToImage(e);
-    if (paintMode) { if (textMode) stampText(pos); else startPaint(pos); } else startDraw(pos);
+    if (paintMode) { routePaintClick(pos); } else startDraw(pos);
   });
   overlay.addEventListener('mousemove', e => {
     const pos = overlayToImage(e);
@@ -2908,7 +2910,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (!drawMode && !paintMode) return;
     e.preventDefault();
     const pos = touchPos(e);
-    if (paintMode) { if (textMode) stampText(pos); else startPaint(pos); } else startDraw(pos);
+    if (paintMode) { routePaintClick(pos); } else startDraw(pos);
   }, { passive: false });
   overlay.addEventListener('touchmove', e => {
     if (!isDrawing && !isPainting) return;
@@ -3375,29 +3377,40 @@ function buildGIF(w, h, frames, delayCs) {
   const paintAlphaV    = document.getElementById('paintAlphaV');
   const paintBlendS    = document.getElementById('paintBlendS');
   const paintEraserBtn   = document.getElementById('paintEraserBtn');
+  const paintEyedropBtn  = document.getElementById('paintEyedropBtn');
+  const paintFillBtn     = document.getElementById('paintFillBtn');
   const paintUndoBtn     = document.getElementById('paintUndoBtn');
   const paintClearBtn    = document.getElementById('paintClearBtn');
   const paintTextS       = document.getElementById('paintTextS');
   const paintTextModeBtn = document.getElementById('paintTextModeBtn');
   const _pmOff = '🖌 お絵描き';
   const _pmOn  = '🖌 お絵描き中…';
-  let paintMode = false, isPainting = false, paintLast = null, paintEraser = false, textMode = false;
+  const _eraserOff = '消しゴム';
+  const _eraserOn  = '✓ 消しゴム';
+  let paintMode = false, isPainting = false, paintLast = null, paintEraser = false;
+  // Which click-driven tool is active — 'brush' draws strokes (the default,
+  // handled by startPaint/movePaint/endPaint below); the other three are
+  // single-purpose click tools that never drag. Mutually exclusive by
+  // construction (see togglePaintTool) since a click can only mean one of
+  // them at a time.
+  let paintTool = 'brush'; // 'brush' | 'text' | 'eyedrop' | 'fill'
   let paintCursorPos = null; // overlay-canvas-pixel coords of the last known mouse position, for the brush-size cursor circle
   let pristineCanvas = null; // snapshot taken at each processImage() call, for the "clear my drawing" button
-  let undoCanvas = null; // snapshot taken right before each committed paint action, for the single-level undo button
+  const MAX_UNDO = 3;
+  let undoStack = []; // snapshots taken right before each committed paint action, oldest first, for the multi-level undo button
 
   // Called right before origCanvas is about to be mutated by a committed
-  // paint action (stroke, text stamp, or "clear my drawing") — captures
-  // "how it looked a moment ago" so paintUndoBtn can put it back exactly
-  // once. Overwrites any previous snapshot, so only the most recent action
-  // is undoable (by design — the user asked for one level, not a history).
+  // paint action (stroke, text stamp, fill, or "clear my drawing") —
+  // captures "how it looked a moment ago" and pushes it onto undoStack so
+  // paintUndoBtn can pop snapshots off one at a time. Capped at MAX_UNDO
+  // (oldest dropped first) — the user asked for a handful of steps, not an
+  // unbounded history.
   function snapshotForUndo() {
-    if (!undoCanvas) undoCanvas = document.createElement('canvas');
-    if (undoCanvas.width !== imgW || undoCanvas.height !== imgH) {
-      undoCanvas.width = imgW; undoCanvas.height = imgH;
-    }
-    undoCanvas.getContext('2d').clearRect(0, 0, imgW, imgH);
-    undoCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
+    const snap = document.createElement('canvas');
+    snap.width = imgW; snap.height = imgH;
+    snap.getContext('2d').drawImage(origCanvas, 0, 0);
+    undoStack.push(snap);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
     paintUndoBtn.disabled = false;
   }
 
@@ -3537,6 +3550,138 @@ function buildGIF(w, h, frames, delayCs) {
     updateMLResistance();
   }
 
+  // Dispatches a paint-mode click to whichever tool is currently selected.
+  // Only 'brush' drags (startPaint/movePaint/endPaint, wired up separately
+  // above/below); the other three fire once per click and never set
+  // isPainting, so movePaint()'s isPainting guard already keeps them from
+  // dragging even though mousemove/touchmove keep calling it.
+  function routePaintClick(pos) {
+    if (paintTool === 'text') stampText(pos);
+    else if (paintTool === 'eyedrop') pickColor(pos);
+    else if (paintTool === 'fill') doFill(pos);
+    else startPaint(pos);
+  }
+
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+
+  // Samples the color already on origCanvas (not the live noise preview)
+  // under the click, writes it into the color swatch, and — since the user
+  // clicked specifically to grab a color to paint with — clears any active
+  // eraser toggle so the picked color actually gets used on the next
+  // stroke instead of being silently overridden by paintStrokeColor()'s
+  // eraser branch. Single-shot: picking always hands control back to the
+  // brush, mirroring how eyedroppers behave in most simple paint tools.
+  function pickColor(pos) {
+    if (!paintMode || !origCanvas) return;
+    const x = Math.min(imgW - 1, Math.max(0, Math.floor(pos.x)));
+    const y = Math.min(imgH - 1, Math.max(0, Math.floor(pos.y)));
+    const d = origCanvas.getContext('2d').getImageData(x, y, 1, 1).data;
+    paintColorS.value = '#' + [d[0], d[1], d[2]].map(v => v.toString(16).padStart(2, '0')).join('');
+    if (paintEraser) {
+      paintEraser = false;
+      paintEraserBtn.style.color = '';
+      paintEraserBtn.textContent = _eraserOff;
+    }
+    togglePaintTool('eyedrop'); // already 'eyedrop' here, so this just flips back to 'brush'
+  }
+
+  // How different two colors are allowed to be (in squared RGB distance)
+  // and still count as "the same region" for the fill tool — fixed rather
+  // than an exposed slider, same basic-tools-scope call as the eraser
+  // having no separate radius control.
+  const FILL_TOLERANCE2 = 32 * 32;
+
+  // Iterative (stack-based, not recursive — a 480×480 canvas is 230k
+  // pixels, well past a safe call-stack depth) 4-connected flood fill.
+  // `visited` is tracked separately from the returned `mask` so a pixel
+  // that fails the tolerance check is never re-queued by a different
+  // neighbor — without that, off-mask border pixels get requeued and
+  // retested once per adjacent in-mask pixel instead of exactly once.
+  function floodFillMask(x0, y0, data, w, h) {
+    const startIdx = (y0 * w + x0) * 4;
+    const r0 = data[startIdx], g0 = data[startIdx + 1], b0 = data[startIdx + 2];
+    const visited = new Uint8Array(w * h);
+    const mask = new Uint8Array(w * h);
+    const stack = new Int32Array(w * h);
+    let sp = 0;
+    stack[sp++] = y0 * w + x0;
+    visited[y0 * w + x0] = 1;
+    while (sp > 0) {
+      const p = stack[--sp];
+      const i4 = p * 4;
+      const dr = data[i4] - r0, dg = data[i4 + 1] - g0, db = data[i4 + 2] - b0;
+      if (dr * dr + dg * dg + db * db > FILL_TOLERANCE2) continue;
+      mask[p] = 1;
+      const px = p % w, py = (p / w) | 0;
+      if (px > 0)     { const q = p - 1; if (!visited[q]) { visited[q] = 1; stack[sp++] = q; } }
+      if (px < w - 1) { const q = p + 1; if (!visited[q]) { visited[q] = 1; stack[sp++] = q; } }
+      if (py > 0)     { const q = p - w; if (!visited[q]) { visited[q] = 1; stack[sp++] = q; } }
+      if (py < h - 1) { const q = p + w; if (!visited[q]) { visited[q] = 1; stack[sp++] = q; } }
+    }
+    return mask;
+  }
+
+  // Flood-fills the clicked region with the current brush color, going
+  // through strokeLayerCanvas + the same opacity/blend-mode composite step
+  // endPaint() uses (see the comment on strokeLayerCanvas above) so a fill
+  // respects the opacity slider and blend-mode dropdown exactly like a
+  // brush stroke does, instead of being a separate hard-coded behavior.
+  function doFill(pos) {
+    if (!paintMode || !hslBuf) return;
+    const x0 = Math.min(imgW - 1, Math.max(0, Math.floor(pos.x)));
+    const y0 = Math.min(imgH - 1, Math.max(0, Math.floor(pos.y)));
+    const oc2 = origCanvas.getContext('2d');
+    const src = oc2.getImageData(0, 0, imgW, imgH);
+    const mask = floodFillMask(x0, y0, src.data, imgW, imgH);
+    ensureStrokeLayer();
+    const slc = strokeLayerCanvas.getContext('2d');
+    slc.clearRect(0, 0, imgW, imgH);
+    const fillData = slc.createImageData(imgW, imgH);
+    const [fr, fg, fb] = hexToRgb(paintStrokeColor());
+    const fd = fillData.data;
+    for (let i = 0; i < imgW * imgH; i++) {
+      if (mask[i]) {
+        const i4 = i * 4;
+        fd[i4] = fr; fd[i4 + 1] = fg; fd[i4 + 2] = fb; fd[i4 + 3] = 255;
+      }
+    }
+    slc.putImageData(fillData, 0, 0);
+    snapshotForUndo();
+    oc2.globalAlpha = paintAlpha();
+    oc2.globalCompositeOperation = paintBlendS.value;
+    oc2.drawImage(strokeLayerCanvas, 0, 0);
+    oc2.globalAlpha = 1;
+    oc2.globalCompositeOperation = 'source-over';
+    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose(); // see the comment in endPaint() above
+    drawOriginal();
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    computeImageStats();
+    updateMLResistance();
+  }
+
+  function updatePaintToolButtons() {
+    paintTextModeBtn.style.color = paintTool === 'text' ? 'var(--accent)' : '';
+    paintTextModeBtn.textContent = paintTool === 'text' ? '✓ 文字を置く' : '🔤 文字を置く';
+    paintEyedropBtn.style.color = paintTool === 'eyedrop' ? 'var(--accent)' : '';
+    paintEyedropBtn.textContent = paintTool === 'eyedrop' ? '✓ スポイト' : '🎨 スポイト';
+    paintFillBtn.style.color = paintTool === 'fill' ? 'var(--accent)' : '';
+    paintFillBtn.textContent = paintTool === 'fill' ? '✓ 塗りつぶし' : '🪣 塗りつぶし';
+  }
+
+  // All three single-click tools (text/eyedrop/fill) share one exclusive
+  // slot (paintTool) rather than three independent booleans, so selecting
+  // one always deselects whichever other was active — clicking the
+  // already-active tool's button drops back to the plain brush.
+  function togglePaintTool(tool) {
+    paintTool = (paintTool === tool) ? 'brush' : tool;
+    updatePaintToolButtons();
+    drawRegionOverlay(); // show/hide the brush cursor circle immediately, without waiting for the next mousemove
+  }
+
   paintSizeS.addEventListener('input', () => {
     paintSizeV.textContent = paintSizeS.value + 'px';
     if (paintMode) drawRegionOverlay(); // resize the brush cursor circle immediately, without waiting for the next mousemove
@@ -3546,33 +3691,30 @@ function buildGIF(w, h, frames, delayCs) {
   paintEraserBtn.addEventListener('click', () => {
     paintEraser = !paintEraser;
     paintEraserBtn.style.color = paintEraser ? 'var(--accent)' : '';
-    paintEraserBtn.textContent = paintEraser ? '✓ 消しゴム' : '消しゴム';
+    paintEraserBtn.textContent = paintEraser ? _eraserOn : _eraserOff;
   });
 
   // Stays on until toggled off (like the eraser) so several words/labels
   // can be stamped in a row without re-clicking; a click on the canvas
   // stamps once rather than starting a brush stroke while this is active
   // (see the pointerdown branching below).
-  paintTextModeBtn.addEventListener('click', () => {
-    textMode = !textMode;
-    paintTextModeBtn.style.color = textMode ? 'var(--accent)' : '';
-    paintTextModeBtn.textContent = textMode ? '✓ 文字を置く' : '🔤 文字を置く';
-    drawRegionOverlay(); // show/hide the brush cursor circle immediately, without waiting for the next mousemove
-  });
+  paintTextModeBtn.addEventListener('click', () => togglePaintTool('text'));
+  paintEyedropBtn.addEventListener('click', () => togglePaintTool('eyedrop'));
+  paintFillBtn.addEventListener('click', () => togglePaintTool('fill'));
 
   paintUndoBtn.addEventListener('click', () => {
-    if (!undoCanvas) return;
+    if (!undoStack.length) return;
+    const snap = undoStack.pop();
     const oc2 = origCanvas.getContext('2d');
     oc2.clearRect(0, 0, imgW, imgH);
-    oc2.drawImage(undoCanvas, 0, 0);
+    oc2.drawImage(snap, 0, 0);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
     if (detailChk.checked) decompose(); // see the comment in endPaint() above
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     drawOriginal();
     computeImageStats();
     updateMLResistance();
-    undoCanvas = null;
-    paintUndoBtn.disabled = true; // single-level undo, not a history — consumed after one use
+    paintUndoBtn.disabled = undoStack.length === 0; // stays enabled while more undo steps remain
   });
 
   paintClearBtn.addEventListener('click', () => {
