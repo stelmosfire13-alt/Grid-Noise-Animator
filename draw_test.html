@@ -81,6 +81,11 @@
       .fx-card      { order: 5; }
       .out-card     { order: 6; }
 
+      /* モバイルでは.layoutの全カードが縦一列に積まれるため、最後の
+         .out-card(動画を出力ボタン)がサッカーゲーム埋め込みの直上に
+         隙間なく接してしまう — 1行ぶんの余白を空ける。 */
+      #soccer-embed { margin-top: 24px; }
+
       /* プレビューは既に画面幅いっぱいに表示されるため、手動リサイズは
          モバイルでは不要 — グリップごと非表示にする。 */
       .resize-grip { display: none; }
@@ -3494,6 +3499,11 @@ function buildGIF(w, h, frames, delayCs) {
     // One full recompute per stroke (not per segment) — see paintClearBtn
     // below for the same pattern on a similarly one-off operation.
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    // Detail mode renders from lowHslBuf/edgeBuf (built by decompose() from
+    // origCanvas), not hslBuf — without this, painted pixels would show up
+    // immediately in paint mode's raw preview but never in the actual noise
+    // render until detailChk was toggled off and on again to force a rebuild.
+    if (detailChk.checked) decompose();
     drawOriginal();
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     computeImageStats();
@@ -3520,6 +3530,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.globalCompositeOperation = 'source-over';
     const metrics = oc2.measureText(text);
     const pad = 4;
+    if (detailChk.checked) decompose(); // see the comment in endPaint() above — must run before refreshRegion()'s own drawOriginal() so that call is what ends up on screen
     refreshRegion(pos.x - pad, pos.y - fontSize - pad, metrics.width + pad * 2, fontSize + pad * 2);
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     computeImageStats();
@@ -3555,6 +3566,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.clearRect(0, 0, imgW, imgH);
     oc2.drawImage(undoCanvas, 0, 0);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose(); // see the comment in endPaint() above
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     drawOriginal();
     computeImageStats();
@@ -3570,6 +3582,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.clearRect(0, 0, imgW, imgH);
     oc2.drawImage(pristineCanvas, 0, 0);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose(); // see the comment in endPaint() above
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     drawOriginal();
     computeImageStats();
@@ -3615,7 +3628,11 @@ function buildGIF(w, h, frames, delayCs) {
     bctx.fillStyle = '#fff';
     bctx.fillRect(0, 0, w, h);
     processImage(blank, '白紙');
-    paintModeBtn.click(); // start in paint mode — nothing else to do with a blank canvas yet
+    // Desktop: nothing else to do with a blank canvas, so start drawing
+    // right away. Mobile: screen space is precious and the paint toolbar
+    // takes up a lot of it, so leave it opt-in (same 680px breakpoint used
+    // elsewhere for mobile-specific layout, e.g. syncPreviewAspect above).
+    if (window.innerWidth > 680) paintModeBtn.click();
   }
   initBlankCanvas();
 

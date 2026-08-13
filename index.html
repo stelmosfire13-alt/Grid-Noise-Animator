@@ -3499,6 +3499,11 @@ function buildGIF(w, h, frames, delayCs) {
     // One full recompute per stroke (not per segment) — see paintClearBtn
     // below for the same pattern on a similarly one-off operation.
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    // Detail mode renders from lowHslBuf/edgeBuf (built by decompose() from
+    // origCanvas), not hslBuf — without this, painted pixels would show up
+    // immediately in paint mode's raw preview but never in the actual noise
+    // render until detailChk was toggled off and on again to force a rebuild.
+    if (detailChk.checked) decompose();
     drawOriginal();
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     computeImageStats();
@@ -3525,6 +3530,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.globalCompositeOperation = 'source-over';
     const metrics = oc2.measureText(text);
     const pad = 4;
+    if (detailChk.checked) decompose(); // see the comment in endPaint() above — must run before refreshRegion()'s own drawOriginal() so that call is what ends up on screen
     refreshRegion(pos.x - pad, pos.y - fontSize - pad, metrics.width + pad * 2, fontSize + pad * 2);
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     computeImageStats();
@@ -3560,6 +3566,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.clearRect(0, 0, imgW, imgH);
     oc2.drawImage(undoCanvas, 0, 0);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose(); // see the comment in endPaint() above
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     drawOriginal();
     computeImageStats();
@@ -3575,6 +3582,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.clearRect(0, 0, imgW, imgH);
     oc2.drawImage(pristineCanvas, 0, 0);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose(); // see the comment in endPaint() above
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     drawOriginal();
     computeImageStats();

@@ -2597,6 +2597,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.globalAlpha = 1;
     oc2.globalCompositeOperation = 'source-over';
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose();
     drawOriginal();
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     computeImageStats();
@@ -2620,6 +2621,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.globalCompositeOperation = 'source-over';
     const metrics = oc2.measureText(text);
     const pad = 4;
+    if (detailChk.checked) decompose();
     refreshRegion(pos.x - pad, pos.y - fontSize - pad, metrics.width + pad * 2, fontSize + pad * 2);
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     computeImageStats();
@@ -2651,6 +2653,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.clearRect(0, 0, imgW, imgH);
     oc2.drawImage(undoCanvas, 0, 0);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose();
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     drawOriginal();
     computeImageStats();
@@ -2666,6 +2669,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.clearRect(0, 0, imgW, imgH);
     oc2.drawImage(pristineCanvas, 0, 0);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose();
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     drawOriginal();
     computeImageStats();
