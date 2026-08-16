@@ -2714,7 +2714,6 @@ function buildGIF(w, h, frames, delayCs) {
   let regionPoints   = [];  // points of the polygon currently being drawn
   let regionPolygons = [];  // completed polygons, kept so new strokes add to the selection instead of replacing it
   let regionMask     = null;
-  let regionMaskCanvas = null; // same shape as regionMask, but kept as a canvas (not just a Uint8Array) so paint operations can clip against it directly with destination-in/out compositing
   let origImageData = null;
   let isDrawing  = false;
   let drawMode   = false;
@@ -2781,12 +2780,7 @@ function buildGIF(w, h, frames, delayCs) {
     const ow = overlay.width, oh = overlay.height;
     octx.clearRect(0, 0, ow, oh);
     if (paintMode && paintTool === 'brush' && paintCursorPos) drawBrushCursor();
-    // Completed selections stay visible outside drawMode too (e.g. while
-    // paint mode is active) — paint strokes now clip to this same selection
-    // (see clipLayerToSelection() below), so its boundary needs to stay on
-    // screen as a reminder of where painting is allowed, not just while
-    // actively editing it.
-    if (!drawMode && !regionPolygons.length) return;
+    if (!drawMode) return;
     const cr = canvas.getBoundingClientRect();
     const or = overlay.getBoundingClientRect();
     const sx = cr.width  / imgW * ow / or.width;
@@ -2816,7 +2810,7 @@ function buildGIF(w, h, frames, delayCs) {
     }
 
     // Polygon currently being drawn (outline only, no fill until closed)
-    if (drawMode && regionPoints.length >= 2) {
+    if (regionPoints.length >= 2) {
       tracePath(regionPoints);
       if (!isDrawing) octx.closePath();
       octx.strokeStyle = '#ff0';
@@ -2839,7 +2833,6 @@ function buildGIF(w, h, frames, delayCs) {
       mc.closePath();
       mc.fill();
     }
-    regionMaskCanvas = off; // kept alongside the Uint8Array below for clipLayerToSelection()
     const d = mc.getImageData(0, 0, imgW, imgH).data;
     regionMask = new Uint8Array(imgW * imgH);
     for (let i = 0; i < imgW * imgH; i++) regionMask[i] = d[i * 4] > 128 ? 1 : 0;
@@ -2953,33 +2946,21 @@ function buildGIF(w, h, frames, delayCs) {
       btn.style.color = '';
       overlay.style.pointerEvents = 'none';
       overlay.style.cursor = '';
-      // Redraw rather than clear outright — a completed selection stays on
-      // screen (drawRegionOverlay() now shows it outside drawMode too) since
-      // it still clips paint operations; only the in-progress-polygon outline
-      // actually needs to disappear here, and drawRegionOverlay() already
-      // skips that once drawMode is false.
-      drawRegionOverlay();
+      octx.clearRect(0, 0, overlay.width, overlay.height);
       sswChk.disabled = false; sswPeriodS.disabled = false; sswScaleS.disabled = false;
       redrawIfStopped();
     }
   });
   document.getElementById('clearRegionBtn').addEventListener('click', () => {
-    regionPoints = []; regionPolygons = []; regionMask = null; regionMaskCanvas = null;
+    regionPoints = []; regionPolygons = []; regionMask = null;
     octx.clearRect(0, 0, overlay.width, overlay.height);
-    // Refresh whichever preview is actually on screen — paint mode shows the
-    // raw drawing (drawOriginal()), not the noise-processed frame.
-    if (paintMode) { if (hslBuf) drawOriginal(); }
-    else if (!playing && hslBuf) { drawNoise(); }
+    if (!playing && hslBuf) { drawNoise(); }
   });
   document.getElementById('applyModeBtn').addEventListener('click', () => {
     applyInside = !applyInside;
     document.getElementById('applyModeBtn').textContent = applyInside ? _rgInside : _rgOutside;
     drawRegionOverlay();
-    // Same reasoning as clearRegionBtn above — this toggle now also decides
-    // which side future paint strokes are clipped to, so it's just as
-    // relevant while paint mode is active as it is for the noise selection.
-    if (paintMode) { if (hslBuf) drawOriginal(); }
-    else if (!playing && hslBuf) { drawNoise(); applyRegionMask(); }
+    if (!playing && hslBuf) { drawNoise(); applyRegionMask(); }
   });
 
   window.addEventListener('resize', () => { syncPreviewAspect(); syncOverlaySize(); });
@@ -3479,30 +3460,6 @@ function buildGIF(w, h, frames, delayCs) {
     }
   }
 
-  // Confines a paint-commit layer (brush stroke / text stamp / fill,
-  // already drawn onto it at full opacity) to the current region selection,
-  // if any — reusing the exact same regionMask/applyInside the noise side's
-  // 外側に適用/内側に適用 toggle already uses (see applyRegionMask() above),
-  // so painting and noise both answer to one shared selection rather than
-  // two separate concepts. No-op when there's no active selection.
-  // destination-in keeps the layer only where the selection shape is opaque
-  // (→ 内側に適用: paint only lands inside); destination-out keeps it only
-  // where the selection shape is transparent (→ 外側に適用, the default:
-  // paint is kept out of the selected area).
-  function clipLayerToSelection(layerCanvas) {
-    if (!regionMask || !regionMaskCanvas) return;
-    const lctx = layerCanvas.getContext('2d');
-    lctx.globalCompositeOperation = applyInside ? 'destination-in' : 'destination-out';
-    lctx.drawImage(regionMaskCanvas, 0, 0);
-    lctx.globalCompositeOperation = 'source-over';
-  }
-
-  // Separate scratch canvas for the live in-progress preview, so clipping
-  // it for display doesn't destructively erase strokeLayerCanvas itself —
-  // that canvas keeps accumulating the raw (unclipped) stroke across
-  // mousemove segments until endPaint() commits and clips it once, for real.
-  let clipPreviewCanvas = null;
-
   // Live feedback while the stroke is still in progress: show origCanvas
   // with the in-progress layer composited on top (blend mode + opacity),
   // without touching origCanvas itself — the real commit only happens once,
@@ -3511,19 +3468,7 @@ function buildGIF(w, h, frames, delayCs) {
     ctx.drawImage(origCanvas, 0, 0);
     ctx.globalAlpha = paintAlpha();
     ctx.globalCompositeOperation = paintBlendS.value;
-    let layer = strokeLayerCanvas;
-    if (regionMask) {
-      if (!clipPreviewCanvas) clipPreviewCanvas = document.createElement('canvas');
-      if (clipPreviewCanvas.width !== imgW || clipPreviewCanvas.height !== imgH) {
-        clipPreviewCanvas.width = imgW; clipPreviewCanvas.height = imgH;
-      }
-      const pctx = clipPreviewCanvas.getContext('2d');
-      pctx.clearRect(0, 0, imgW, imgH);
-      pctx.drawImage(strokeLayerCanvas, 0, 0);
-      clipLayerToSelection(clipPreviewCanvas);
-      layer = clipPreviewCanvas;
-    }
-    ctx.drawImage(layer, 0, 0);
+    ctx.drawImage(strokeLayerCanvas, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
   }
@@ -3560,7 +3505,6 @@ function buildGIF(w, h, frames, delayCs) {
     isPainting = false;
     paintLast = null;
     snapshotForUndo();
-    clipLayerToSelection(strokeLayerCanvas);
     const oc2 = origCanvas.getContext('2d');
     oc2.globalAlpha = paintAlpha();
     oc2.globalCompositeOperation = paintBlendS.value;
@@ -3591,25 +3535,15 @@ function buildGIF(w, h, frames, delayCs) {
     snapshotForUndo();
     const oc2 = origCanvas.getContext('2d');
     const fontSize = Math.max(8, (+paintSizeS.value || 6) * 4);
-    // Drawn onto strokeLayerCanvas first (same as a brush stroke), instead
-    // of straight onto origCanvas, purely so clipLayerToSelection() has
-    // something to clip before it's composited in — a stamp is a single
-    // atomic write, so this doesn't need the multi-segment-drag rationale
-    // strokeLayerCanvas exists for elsewhere, just the clip step.
-    ensureStrokeLayer();
-    const slc = strokeLayerCanvas.getContext('2d');
-    slc.clearRect(0, 0, imgW, imgH);
-    slc.font = `${fontSize}px sans-serif`;
-    slc.textBaseline = 'alphabetic';
-    slc.fillStyle = paintStrokeColor();
-    slc.fillText(text, pos.x, pos.y);
-    const metrics = slc.measureText(text);
-    clipLayerToSelection(strokeLayerCanvas);
     oc2.globalAlpha = paintAlpha();
     oc2.globalCompositeOperation = paintBlendS.value;
-    oc2.drawImage(strokeLayerCanvas, 0, 0);
+    oc2.font = `${fontSize}px sans-serif`;
+    oc2.textBaseline = 'alphabetic';
+    oc2.fillStyle = paintStrokeColor();
+    oc2.fillText(text, pos.x, pos.y);
     oc2.globalAlpha = 1;
     oc2.globalCompositeOperation = 'source-over';
+    const metrics = oc2.measureText(text);
     const pad = 4;
     if (detailChk.checked) decompose(); // see the comment in endPaint() above — must run before refreshRegion()'s own drawOriginal() so that call is what ends up on screen
     refreshRegion(pos.x - pad, pos.y - fontSize - pad, metrics.width + pad * 2, fontSize + pad * 2);
@@ -3717,7 +3651,6 @@ function buildGIF(w, h, frames, delayCs) {
       }
     }
     slc.putImageData(fillData, 0, 0);
-    clipLayerToSelection(strokeLayerCanvas);
     snapshotForUndo();
     oc2.globalAlpha = paintAlpha();
     oc2.globalCompositeOperation = paintBlendS.value;
@@ -3829,7 +3762,6 @@ function buildGIF(w, h, frames, delayCs) {
       sswChk.disabled = true; sswPeriodS.disabled = true; sswScaleS.disabled = true;
       paintControls.style.display = 'flex';
       if (hslBuf) drawOriginal();
-      drawRegionOverlay(); // show a persisted selection immediately (it clips paint now) instead of waiting for the first mousemove
     } else {
       paintModeBtn.textContent = _pmOff;
       paintModeBtn.style.color = '';
