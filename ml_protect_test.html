@@ -613,6 +613,7 @@
           <button type="button" class="btn btn-gray" id="paintFillBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🪣 塗りつぶし</button>
           <button type="button" class="btn btn-gray" id="paintUndoBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">↩ 元に戻す</button>
           <button type="button" class="btn btn-gray" id="paintClearBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🗑 描画を消す</button>
+          <button type="button" class="btn btn-gray" id="paintSaveBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">💾 画像を保存</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <input type="text" id="paintTextS" placeholder="テキストを入力" maxlength="40" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
@@ -3234,6 +3235,7 @@ function buildGIF(w, h, frames, delayCs) {
   const paintFillBtn     = document.getElementById('paintFillBtn');
   const paintUndoBtn     = document.getElementById('paintUndoBtn');
   const paintClearBtn    = document.getElementById('paintClearBtn');
+  const paintSaveBtn     = document.getElementById('paintSaveBtn');
   const paintTextS       = document.getElementById('paintTextS');
   const paintTextModeBtn = document.getElementById('paintTextModeBtn');
   const _pmOff = '🖌 お絵描き';
@@ -3582,6 +3584,23 @@ function buildGIF(w, h, frames, delayCs) {
     drawOriginal();
     computeImageStats();
     updateMLResistance();
+  });
+
+  // Saves the drawing itself (origCanvas — pre-noise, whatever's actually
+  // been painted/uploaded) rather than the current noise-processed preview
+  // frame, since that's what a user re-opening this later would want back.
+  // Same Blob+ObjectURL+temp-<a> download pattern as exportDone() above.
+  paintSaveBtn.addEventListener('click', () => {
+    if (!origCanvas) return;
+    origCanvas.toBlob(blob => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), {
+        href: url, download: `drawing-${exportFilenameStamp()}.png`
+      });
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 2000);
+    }, 'image/png');
   });
 
   paintModeBtn.addEventListener('click', () => {
