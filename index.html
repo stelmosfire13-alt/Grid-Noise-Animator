@@ -1127,8 +1127,15 @@
           <span>スクリーンセイバー（テスト）</span>
         </label>
         <div id="sswField" style="display:none;margin-top:8px;">
-          <div class="field-label">周期 <em id="sswPeriodV">8 秒</em></div>
-          <input type="range" id="sswPeriodS" min="3" max="30" value="8">
+          <div class="field-label">動き方</div>
+          <select id="sswModeS" style="width:100%;padding:5px 6px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+            <option value="diag" selected>斜め（DVD風）</option>
+            <option value="horizontal">横方向への往復</option>
+            <option value="vertical">縦方向への往復</option>
+            <option value="rotate">回転方向への往復</option>
+          </select>
+          <div class="field-label" style="margin-top:6px;">周期 <em id="sswPeriodV">8 秒</em></div>
+          <input type="range" id="sswPeriodS" min="1" max="30" value="8">
           <div class="field-label" style="margin-top:6px;">サイズ <em id="sswScaleV">85%</em></div>
           <input type="range" id="sswScaleS" min="50" max="150" value="85">
           <div style="font-size:0.68rem;color:#777;margin-top:4px;line-height:1.4;">画像全体をDVDスクリーンセイバー風に動かします。周期の秒数ごとに必ず元の位置（中央）に戻ります。</div>
@@ -1534,6 +1541,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   const sswChk      = document.getElementById('sswChk');
   const sswField    = document.getElementById('sswField');
+  const sswModeS    = document.getElementById('sswModeS');
   const sswPeriodS  = document.getElementById('sswPeriodS');
   const sswScaleS   = document.getElementById('sswScaleS');
 
@@ -1567,6 +1575,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (sswChk.checked) syncDurToPeriod();
     redrawIfStopped();
   });
+  sswModeS.addEventListener('change', redrawIfStopped);
   sswPeriodS.addEventListener('input', () => {
     document.getElementById('sswPeriodV').textContent = sswPeriodS.value + ' 秒';
     if (sswChk.checked) syncDurToPeriod();
@@ -1966,14 +1975,23 @@ function buildGIF(w, h, frames, delayCs) {
   let blurOffscreen = null, blurOCtx = null;  // ぼかし用オフスクリーンキャンバス
 
   // ── Screensaver mode (test) ──────────────────────────────────────────────
-  // Moves the whole rendered frame around inside the canvas, DVD-logo style:
-  // independent bounce (triangle wave) motion on x and y, with periods that
-  // are exact fractions (period/3, period/2) of the configured cycle length.
-  // Because both periods divide the cycle length evenly, the combined
-  // position is guaranteed to be exactly (0,0) — i.e. back at the original
-  // centered framing — at t=0, t=period, t=2*period, ... with no drift.
+  // Moves the whole rendered frame around inside the canvas. Four modes,
+  // selected by sswModeS, all built on the same triangle-wave primitive:
+  //  - 'diag' (default, DVD-logo style): independent bounce on x and y, with
+  //    periods that are exact fractions (period/3, period/2) of the
+  //    configured cycle length. Because both periods divide the cycle length
+  //    evenly, the combined position is guaranteed to be exactly (0,0) —
+  //    i.e. back at the original centered framing — at t=0, t=period,
+  //    t=2*period, ... with no drift.
+  //  - 'horizontal' / 'vertical': bounce on a single axis only, using the
+  //    full configured period directly (no fraction trick needed — a single
+  //    triangle wave already returns to 0 every period on its own).
+  //  - 'rotate': same triangle wave, scaled to ±SSW_ROTATE_MAX_DEG degrees
+  //    and applied as a canvas rotation around the image's center instead of
+  //    a translation.
   let sswStartTs = null;          // performance.now()-basis timestamp of the current play session's first frame
   let sswSnapshotCanvas = null;   // offscreen buffer holding the undisplaced frame, reused across calls
+  const SSW_ROTATE_MAX_DEG = 15;  // fixed rather than an exposed slider — basic-tools scope, same call as the fill tool's tolerance
 
   function sswTriWave(t, P) {
     // Triangle wave in [-1, 1]; sswTriWave(0, P) === 0, matching the resting/original position.
@@ -1986,11 +2004,7 @@ function buildGIF(w, h, frames, delayCs) {
   function applyScreensaver(tSec) {
     const period = Math.max(1, +sswPeriodS.value || 8);
     const scale  = Math.min(1.5, Math.max(0.5, (+sswScaleS.value || 85) / 100));
-    const rx = imgW * (1 - scale) / 2;
-    const ry = imgH * (1 - scale) / 2;
-    const baseX = rx, baseY = ry; // resting (t=0) position: centered
-    const drawX = baseX + rx * sswTriWave(tSec, period / 3);
-    const drawY = baseY + ry * sswTriWave(tSec, period / 2);
+    const mode   = sswModeS.value;
 
     if (!sswSnapshotCanvas) {
       sswSnapshotCanvas = document.createElement('canvas');
@@ -2004,6 +2018,29 @@ function buildGIF(w, h, frames, delayCs) {
 
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, imgW, imgH);
+
+    if (mode === 'rotate') {
+      const angle = SSW_ROTATE_MAX_DEG * Math.PI / 180 * sswTriWave(tSec, period);
+      ctx.save();
+      ctx.translate(imgW / 2, imgH / 2);
+      ctx.rotate(angle);
+      ctx.drawImage(sswSnapshotCanvas, 0, 0, imgW, imgH, -imgW * scale / 2, -imgH * scale / 2, imgW * scale, imgH * scale);
+      ctx.restore();
+      return;
+    }
+
+    const rx = imgW * (1 - scale) / 2;
+    const ry = imgH * (1 - scale) / 2;
+    const baseX = rx, baseY = ry; // resting (t=0) position: centered
+    let drawX = baseX, drawY = baseY;
+    if (mode === 'horizontal') {
+      drawX = baseX + rx * sswTriWave(tSec, period);
+    } else if (mode === 'vertical') {
+      drawY = baseY + ry * sswTriWave(tSec, period);
+    } else { // 'diag'
+      drawX = baseX + rx * sswTriWave(tSec, period / 3);
+      drawY = baseY + ry * sswTriWave(tSec, period / 2);
+    }
     ctx.drawImage(sswSnapshotCanvas, 0, 0, imgW, imgH, drawX, drawY, imgW * scale, imgH * scale);
   }
 
