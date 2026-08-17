@@ -1008,6 +1008,18 @@
           <div class="dz-name" id="dzName"></div>
         </div>
       </div>
+      <div id="orientControls" style="display:none;margin-top:8px;">
+        <div style="font-size:11px;color:#888;margin-bottom:5px;line-height:1.4;">
+          画像の向きを変えます（AIは向きが変わると認識しづらくなる場合があります。人間は見慣れないだけで理解はできます）。
+        </div>
+        <div style="display:flex;gap:5px;">
+          <button class="btn btn-gray" id="rotateLeftBtn" style="flex:1;font-size:0.82rem;">⟲ 90°</button>
+          <button class="btn btn-gray" id="rotateRightBtn" style="flex:1;font-size:0.82rem;">⟳ 90°</button>
+          <button class="btn btn-gray" id="flipHBtn" style="flex:1;font-size:0.82rem;">⇋ 左右</button>
+          <button class="btn btn-gray" id="flipVBtn" style="flex:1;font-size:0.82rem;">⇕ 上下</button>
+        </div>
+        <button class="btn btn-gray btn-full" id="resetOrientBtn" style="margin-top:5px;font-size:0.78rem;" disabled>向きをリセット</button>
+      </div>
       <div id="videoModeNotice" style="display:none;margin-top:8px;font-size:11px;color:#888;line-height:1.4;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;">
         <strong style="color:var(--text);">動画モード</strong>（<span id="videoModeInfo"></span>）: プレビューは1コマ目のみ表示されます。「動画を出力」を押すと全フレームにノイズ処理をかけます（時間がかかります）。詳細モード・WebM出力には対応していません。
       </div>
@@ -1106,6 +1118,23 @@
         <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
           フレーム平均後も残る固定パターンを埋め込みます。人間には不可視ですがAI特徴抽出を乱します。
         </div>
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="ocrChk" style="width:14px;height:14px">
+          <span>文字を画像に埋め込む（ChatGPT等で読める形式）</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          実際の文字を薄いコントラストで画像に敷き詰めます。フレーム平均に頼らず単一フレームでも視認できます。
+        </div>
+        <input type="text" id="msgText" value="NO-AI-TRAINING" maxlength="32" style="width:100%;margin-top:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:6px 8px;font-size:0.82rem;box-sizing:border-box;">
+        <div style="font-size:10px;color:#777;margin-top:3px;text-align:right;"><span id="msgLenV">15</span>/32文字</div>
+        <div class="field-label" style="margin-top:8px">文字の濃さ <em id="ocrAmpV">22</em>/255</div>
+        <input type="range" id="ocrAmpS" min="2" max="60" value="22">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;margin-top:6px;">
+          <input type="checkbox" id="ocrDarkChk" style="width:14px;height:14px">
+          <span>文字を暗くする（既定は白抜き文字）</span>
+        </label>
       </div>
     </div>
 
@@ -1528,6 +1557,10 @@ function buildGIF(w, h, frames, delayCs) {
   const litS     = document.getElementById('litS');
   const satS     = document.getElementById('satS');
   const mlGuard  = document.getElementById('mlGuard');
+  const msgText  = document.getElementById('msgText');
+  const ocrChk   = document.getElementById('ocrChk');
+  const ocrAmpS  = document.getElementById('ocrAmpS');
+  const ocrDarkChk = document.getElementById('ocrDarkChk');
   const blurChk  = document.getElementById('blurChk');
   const blurS    = document.getElementById('blurS');
   const warpChk    = document.getElementById('warpChk');
@@ -1592,6 +1625,18 @@ function buildGIF(w, h, frames, delayCs) {
   document.getElementById('warpChk').addEventListener('change', redrawIfStopped);
   document.getElementById('noiseSel').addEventListener('change', redrawIfStopped);
   mlGuard.addEventListener('change', redrawIfStopped);
+  msgText.addEventListener('input', () => {
+    document.getElementById('msgLenV').textContent = msgText.value.length;
+    regenerateOverlay();
+    redrawIfStopped();
+  });
+  ocrChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
+  ocrAmpS.addEventListener('input', () => {
+    document.getElementById('ocrAmpV').textContent = ocrAmpS.value;
+    regenerateOverlay();
+    redrawIfStopped();
+  });
+  ocrDarkChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
 
   (function () {
     const THUMB_HIT = 32; // px: how close to thumb center touch must land
@@ -1951,6 +1996,9 @@ function buildGIF(w, h, frames, delayCs) {
   let imgW = 0, imgH = 0;
   let loadedVideo  = null;  // <video> element when a video file was loaded instead of an image
   let videoDuration = 0;
+  let loadedImg = null, loadedName = '';  // <img> element + filename, kept so orientation changes can re-run processImage() without re-reading the file
+  let orientRotation = 0;      // 0, 90, 180, 270 (clockwise)
+  let orientFlipH = false, orientFlipV = false;
 
   let animId      = null;
   let playing     = false;
@@ -2059,12 +2107,45 @@ function buildGIF(w, h, frames, delayCs) {
     return [h * 60, s * 100, l * 100];
   }
 
+  // ── OCR-readable text ─────────────────────────────────────────────────────
+  // Renders the message (tiled, to survive cropping) onto an offscreen
+  // canvas and returns a 0..1 ink-coverage mask, which generateOverlay()
+  // then adds as a low-contrast brightness bias — visible in a SINGLE frame
+  // (unlike the sinusoidal ML-guard pattern, which leans on frame
+  // averaging), since a generic vision model just looks at whatever
+  // frame(s) it's given.
+  function renderTextBiasMask(message, w, h) {
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d');
+    octx.fillStyle = '#000';
+    octx.fillRect(0, 0, w, h);
+    const fontSize = Math.max(10, Math.round(Math.min(w, h) * 0.06));
+    octx.font = `bold ${fontSize}px monospace`;
+    octx.fillStyle = '#fff';
+    octx.textBaseline = 'top';
+    const label = message + '   ';
+    const tw = Math.max(1, octx.measureText(label).width);
+    const lineH = fontSize * 1.7;
+    for (let y = -lineH, row = 0; y < h + lineH; y += lineH, row++) {
+      const rowOffset = (row % 2) * (tw / 2);
+      for (let x = -tw - rowOffset; x < w; x += tw) octx.fillText(label, x, y);
+    }
+    const data = octx.getImageData(0, 0, w, h).data;
+    const mask = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) mask[i] = data[i * 4] / 255; // white text on black → red channel = coverage
+    return mask;
+  }
+
   // ── ML-protection overlay ────────────────────────────────────────────────
   // Generates a fixed high-frequency sinusoidal pattern seeded from the image.
   // - Amplitude ~6/255 (below human JND at normal viewing distance)
   // - Spatial frequency: period 2-5 px → above human CSF cutoff (~30 cpd)
   // - Zero-mean per channel (no DC shift)
   // - Survives temporal frame averaging; disrupts CNN feature maps
+  // Combined with the OCR-readable text layer below (independent toggle —
+  // same message text field, but its own on/off and its own visibility
+  // profile, since it's meant to be seen rather than hidden).
   function generateOverlay(pixels, w, h) {
     const overlay = new Float32Array(w * h * 3);
 
@@ -2085,6 +2166,9 @@ function buildGIF(w, h, frames, delayCs) {
     const N   = 5;           // sinusoidal components per channel
     const a   = AMP / N;
 
+    const ocrAmp  = (ocrDarkChk.checked ? -1 : 1) * +ocrAmpS.value;
+    const ocrMask = (ocrChk.checked && msgText.value) ? renderTextBiasMask(msgText.value, w, h) : null;
+
     for (let ch = 0; ch < 3; ch++) {
       for (let k = 0; k < N; k++) {
         const period = 2 + rand() * 3;          // 2–5 px period (high frequency)
@@ -2101,6 +2185,15 @@ function buildGIF(w, h, frames, delayCs) {
           }
         }
       }
+
+      // OCR-readable text: same sign on every channel (a plain brightness
+      // shift, not a color shift, reads most naturally as faint text).
+      if (ocrMask) {
+        for (let i = 0; i < w * h; i++) {
+          if (ocrMask[i] > 0) overlay[i * 3 + ch] += ocrMask[i] * ocrAmp;
+        }
+      }
+
       // Remove residual DC so spatial mean is exactly zero
       let sum = 0;
       for (let i = ch; i < overlay.length; i += 3) sum += overlay[i];
@@ -2109,6 +2202,15 @@ function buildGIF(w, h, frames, delayCs) {
     }
 
     return overlay;
+  }
+
+  // Recomputes fixedOverlay from the current origCanvas content — called
+  // whenever an OCR-text control changes, so toggling the checkbox/slider
+  // updates the live preview without requiring a fresh image upload.
+  function regenerateOverlay() {
+    if (!origCanvas) return;
+    const pixels = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH).data;
+    fixedOverlay = generateOverlay(pixels, imgW, imgH);
   }
 
   // ── File loading ───────────────────────────────────────────────────────────
@@ -2125,6 +2227,7 @@ function buildGIF(w, h, frames, delayCs) {
   function loadFile(file) {
     stopAll();
     if (paintMode) paintModeBtn.click(); // a real upload should land in the normal view, not the blank-canvas paint mode
+    orientRotation = 0; orientFlipH = false; orientFlipV = false;
     if (file.type.startsWith('video/')) loadVideoFile(file);
     else loadImageFile(file);
   }
@@ -2140,7 +2243,12 @@ function buildGIF(w, h, frames, delayCs) {
       dzThumb.src = url; dzThumb.style.display = 'block';
       dzName.textContent = file.name; dzName.style.display = 'block';
       const img = new Image();
-      img.onload = () => processImage(img, file.name);
+      img.onload = () => {
+        loadedImg = img; loadedName = file.name;
+        document.getElementById('orientControls').style.display = 'block';
+        updateOrientResetBtn();
+        processImage(img, file.name);
+      };
       img.src = url;
     };
     reader.readAsDataURL(file);
@@ -2166,6 +2274,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   function loadVideoFile(file) {
     setStatus('動画を読み込み中...');
+    loadedImg = null;
     dzThumb.style.display = 'none';
     dzName.textContent = file.name; dzName.style.display = 'block';
     const video = document.createElement('video');
@@ -2175,9 +2284,10 @@ function buildGIF(w, h, frames, delayCs) {
     video.onerror = () => setStatus('動画の読み込みに失敗しました');
     video.onloadedmetadata = () => { video.currentTime = 0; };
     video.onseeked = () => {
-      loadedVideo = video;
+      loadedVideo = video; loadedName = file.name;
       videoDuration = video.duration || 0;
       setVideoModeRestrictions(true);
+      document.getElementById('orientControls').style.display = 'block';
       document.getElementById('videoModeNotice').style.display = 'block';
       document.getElementById('videoModeInfo').textContent =
         `${video.videoWidth}×${video.videoHeight}, ${videoDuration.toFixed(1)}秒`;
@@ -2185,11 +2295,47 @@ function buildGIF(w, h, frames, delayCs) {
       const maxDur = Math.max(1, Math.ceil(videoDuration));
       durIn.max = maxDur;
       if (+durIn.value > maxDur) durIn.value = maxDur;
+      updateOrientResetBtn();
       processImage(video, file.name);
       dzThumb.src = canvas.toDataURL('image/png'); dzThumb.style.display = 'block';
     };
     video.src = URL.createObjectURL(file);
   }
+
+  function updateOrientResetBtn() {
+    document.getElementById('resetOrientBtn').disabled =
+      orientRotation === 0 && !orientFlipH && !orientFlipV;
+  }
+
+  function reprocessWithOrientation() {
+    const src = loadedVideo || loadedImg;
+    if (!src) return;
+    stopAll();
+    regionPoints = []; regionPolygons = []; regionMask = null; // old coords no longer valid
+    updateOrientResetBtn();
+    processImage(src, loadedName);
+  }
+
+  document.getElementById('rotateLeftBtn').addEventListener('click', () => {
+    orientRotation = (orientRotation + 270) % 360;
+    reprocessWithOrientation();
+  });
+  document.getElementById('rotateRightBtn').addEventListener('click', () => {
+    orientRotation = (orientRotation + 90) % 360;
+    reprocessWithOrientation();
+  });
+  document.getElementById('flipHBtn').addEventListener('click', () => {
+    orientFlipH = !orientFlipH;
+    reprocessWithOrientation();
+  });
+  document.getElementById('flipVBtn').addEventListener('click', () => {
+    orientFlipV = !orientFlipV;
+    reprocessWithOrientation();
+  });
+  document.getElementById('resetOrientBtn').addEventListener('click', () => {
+    orientRotation = 0; orientFlipH = false; orientFlipV = false;
+    reprocessWithOrientation();
+  });
 
   // ── Image processing ──────────────────────────────────────────────────────
   // A <video> element exposes videoWidth/videoHeight instead of img's
@@ -2221,7 +2367,9 @@ function buildGIF(w, h, frames, delayCs) {
   }
 
   function processImage(img, name) {
-    let w = mediaNaturalWidth(img), h = mediaNaturalHeight(img);
+    const rotated = orientRotation === 90 || orientRotation === 270;
+    let w = rotated ? mediaNaturalHeight(img) : mediaNaturalWidth(img);
+    let h = rotated ? mediaNaturalWidth(img)  : mediaNaturalHeight(img);
     // Scale down if too wide
     if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
     // Snap to COLS/ROWS multiples so cells align perfectly
@@ -2232,11 +2380,27 @@ function buildGIF(w, h, frames, delayCs) {
 
     canvas.width = w; canvas.height = h;
 
-    // Store scaled original in an offscreen canvas
+    // Store scaled + oriented original in an offscreen canvas. Rotation/flip
+    // happen here, once, so every downstream buffer (hslBuf, fixedOverlay,
+    // cellBnds, ...) is built directly from the already-oriented image and
+    // none of that code needs to know orientation exists.
     origCanvas = document.createElement('canvas');
     origCanvas.width = w; origCanvas.height = h;
     const oc = origCanvas.getContext('2d');
-    oc.drawImage(img, 0, 0, w, h);
+    oc.save();
+    oc.translate(w / 2, h / 2);
+    // Flip before rotate: canvas transforms apply to the drawn image
+    // innermost-call-first, so a scale() called after rotate() would mirror
+    // the source image before it gets rotated — meaning "flip horizontal"
+    // would visibly swap a different axis once a 90/270 rotation is also
+    // active, not the left-right the button currently shows. Scaling first
+    // (outermost) mirrors the already-rotated result instead, so the flip
+    // buttons always act on what's currently on screen.
+    oc.scale(orientFlipH ? -1 : 1, orientFlipV ? -1 : 1);
+    oc.rotate(orientRotation * Math.PI / 180);
+    const dw = rotated ? h : w, dh = rotated ? w : h; // pre-rotation draw size
+    oc.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    oc.restore();
 
     // Snapshot for the paint tool's "clear my drawing" button (see below)
     pristineCanvas = document.createElement('canvas');
@@ -2315,8 +2479,15 @@ function buildGIF(w, h, frames, delayCs) {
   async function prepareVideoFrame(timeSec) {
     await seekVideoFrame(loadedVideo, timeSec);
     const w = imgW, h = imgH;
+    const rotated = orientRotation === 90 || orientRotation === 270;
     const oc = origCanvas.getContext('2d');
-    oc.drawImage(loadedVideo, 0, 0, w, h);
+    oc.save();
+    oc.translate(w / 2, h / 2);
+    oc.scale(orientFlipH ? -1 : 1, orientFlipV ? -1 : 1);
+    oc.rotate(orientRotation * Math.PI / 180);
+    const dw = rotated ? h : w, dh = rotated ? w : h;
+    oc.drawImage(loadedVideo, -dw / 2, -dh / 2, dw, dh);
+    oc.restore();
     const pixels = oc.getImageData(0, 0, w, h).data;
     hslBuf = computeHslBuf(pixels, w, h);
     origImageData = new ImageData(pixels, w, h);
