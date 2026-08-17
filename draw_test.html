@@ -2341,51 +2341,99 @@ function buildGIF(w, h, frames, delayCs) {
     paintAccum = flipped;
   }
 
+  // Region-selection polygons (used by the noise-side 外側/内側に適用
+  // toggle) are just vertex coordinates, not raster pixels — so unlike
+  // paintAccum they can be transformed exactly, with plain arithmetic
+  // instead of a canvas redraw. Formulas mirror the same translate→
+  // scale→rotate sequence processImage() uses for the pixel transform
+  // (derived from it, not independently guessed, so the two stay in sync).
+  // oldW/oldH are the dimensions the incoming points are currently
+  // expressed in — the caller's responsibility, since during a multi-step
+  // "reset" replay that's NOT always the live imgW/imgH (which only
+  // updates once, when processImage() finally runs at the end).
+  function rotateRegionPolygonsBy90(clockwise, oldW, oldH) {
+    const tf = clockwise
+      ? p => ({ x: oldH - p.y, y: p.x })
+      : p => ({ x: p.y, y: oldW - p.x });
+    regionPolygons = regionPolygons.map(poly => poly.map(tf));
+    regionPoints = regionPoints.map(tf);
+  }
+  function flipRegionPolygons(horizontal, w, h) {
+    const tf = horizontal
+      ? p => ({ x: w - p.x, y: p.y })
+      : p => ({ x: p.x, y: h - p.y });
+    regionPolygons = regionPolygons.map(poly => poly.map(tf));
+    regionPoints = regionPoints.map(tf);
+  }
+
   function reprocessWithOrientation() {
     const src = loadedVideo || loadedImg;
     if (!src) return;
     stopAll();
-    regionPoints = []; regionPolygons = []; regionMask = null; // old coords no longer valid
     updateOrientResetBtn();
-    processImage(src, loadedName);
+    processImage(src, loadedName); // updates imgW/imgH to the new orientation's dimensions
+    // regionPolygons were already transformed (by the caller, using the
+    // pre-processImage() dimensions) — rebuild the rasterized mask now that
+    // imgW/imgH reflect where those coordinates actually land.
+    if (regionPolygons.length) computeRegionMask(); else regionMask = null;
+    drawRegionOverlay();
   }
 
   document.getElementById('rotateLeftBtn').addEventListener('click', () => {
     orientRotation = (orientRotation + 270) % 360;
     orientHistory.push('rotateLeft');
     rotatePaintAccumBy90(false);
+    rotateRegionPolygonsBy90(false, imgW, imgH);
     reprocessWithOrientation();
   });
   document.getElementById('rotateRightBtn').addEventListener('click', () => {
     orientRotation = (orientRotation + 90) % 360;
     orientHistory.push('rotateRight');
     rotatePaintAccumBy90(true);
+    rotateRegionPolygonsBy90(true, imgW, imgH);
     reprocessWithOrientation();
   });
   document.getElementById('flipHBtn').addEventListener('click', () => {
     orientFlipH = !orientFlipH;
     orientHistory.push('flipH');
     flipPaintAccum(true);
+    flipRegionPolygons(true, imgW, imgH);
     reprocessWithOrientation();
   });
   document.getElementById('flipVBtn').addEventListener('click', () => {
     orientFlipV = !orientFlipV;
     orientHistory.push('flipV');
     flipPaintAccum(false);
+    flipRegionPolygons(false, imgW, imgH);
     reprocessWithOrientation();
   });
   document.getElementById('resetOrientBtn').addEventListener('click', () => {
-    // paintAccum has no pristine source to replay from the way loadedImg
-    // does, so undo it by literally reversing the sequence of individual
-    // clicks that got it here — each step's own inverse is unambiguous
-    // (rotateLeft⁻¹=rotateRight, flip⁻¹=itself) regardless of what order
-    // rotates and flips were interleaved in.
+    // paintAccum and regionPolygons have no pristine source to replay from
+    // the way loadedImg does, so undo them by literally reversing the
+    // sequence of individual clicks that got here — each step's own inverse
+    // is unambiguous (rotateLeft⁻¹=rotateRight, flip⁻¹=itself) regardless of
+    // what order rotates and flips were interleaved in. paintAccum tracks
+    // its own current width/height (it's a real canvas), but regionPolygons
+    // are just coordinates, so curW/curH threads through the loop by hand —
+    // it only actually changes (swaps) at rotate steps.
+    let curW = imgW, curH = imgH;
     while (orientHistory.length) {
       const op = orientHistory.pop();
-      if (op === 'rotateRight') rotatePaintAccumBy90(false);
-      else if (op === 'rotateLeft') rotatePaintAccumBy90(true);
-      else if (op === 'flipH') flipPaintAccum(true);
-      else if (op === 'flipV') flipPaintAccum(false);
+      if (op === 'rotateRight') {
+        rotatePaintAccumBy90(false);
+        rotateRegionPolygonsBy90(false, curW, curH);
+        [curW, curH] = [curH, curW];
+      } else if (op === 'rotateLeft') {
+        rotatePaintAccumBy90(true);
+        rotateRegionPolygonsBy90(true, curW, curH);
+        [curW, curH] = [curH, curW];
+      } else if (op === 'flipH') {
+        flipPaintAccum(true);
+        flipRegionPolygons(true, curW, curH);
+      } else if (op === 'flipV') {
+        flipPaintAccum(false);
+        flipRegionPolygons(false, curW, curH);
+      }
     }
     orientRotation = 0; orientFlipH = false; orientFlipV = false;
     reprocessWithOrientation();
