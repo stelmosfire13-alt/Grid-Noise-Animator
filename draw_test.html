@@ -1999,6 +1999,8 @@ function buildGIF(w, h, frames, delayCs) {
   let loadedImg = null, loadedName = '';  // <img> element + filename, kept so orientation changes can re-run processImage() without re-reading the file
   let orientRotation = 0;      // 0, 90, 180, 270 (clockwise)
   let orientFlipH = false, orientFlipV = false;
+  let paintAccum = null;   // persistent transparent layer holding just the user's paint (composited on top of the base image in processImage()), kept rotated/flipped in sync with the current orientation so rotate/flip preserve it
+  let orientHistory = [];  // sequence of individual orientation ops applied since upload — paintAccum has no pristine source to replay from (unlike loadedImg), so "reset" inverts it by literally undoing each step in reverse
 
   let animId      = null;
   let playing     = false;
@@ -2228,6 +2230,7 @@ function buildGIF(w, h, frames, delayCs) {
     stopAll();
     if (paintMode) paintModeBtn.click(); // a real upload should land in the normal view, not the blank-canvas paint mode
     orientRotation = 0; orientFlipH = false; orientFlipV = false;
+    orientHistory = []; paintAccum = null;
     if (file.type.startsWith('video/')) loadVideoFile(file);
     else loadImageFile(file);
   }
@@ -2307,6 +2310,37 @@ function buildGIF(w, h, frames, delayCs) {
       orientRotation === 0 && !orientFlipH && !orientFlipV;
   }
 
+  // Rotates the persistent paint layer by exactly one button-click's worth
+  // (±90°) so it stays lined up with the base image after processImage()
+  // redraws that image at the new orientation. A no-op while paintAccum is
+  // still null (nothing painted yet).
+  function rotatePaintAccumBy90(clockwise) {
+    if (!paintAccum) return;
+    const oldW = paintAccum.width, oldH = paintAccum.height;
+    const rotated = document.createElement('canvas');
+    rotated.width = oldH; rotated.height = oldW;
+    const rctx = rotated.getContext('2d');
+    rctx.save();
+    rctx.translate(oldH / 2, oldW / 2);
+    rctx.rotate((clockwise ? 90 : -90) * Math.PI / 180);
+    rctx.drawImage(paintAccum, -oldW / 2, -oldH / 2);
+    rctx.restore();
+    paintAccum = rotated;
+  }
+  function flipPaintAccum(horizontal) {
+    if (!paintAccum) return;
+    const w = paintAccum.width, h = paintAccum.height;
+    const flipped = document.createElement('canvas');
+    flipped.width = w; flipped.height = h;
+    const fctx = flipped.getContext('2d');
+    fctx.save();
+    fctx.translate(w / 2, h / 2);
+    fctx.scale(horizontal ? -1 : 1, horizontal ? 1 : -1);
+    fctx.drawImage(paintAccum, -w / 2, -h / 2);
+    fctx.restore();
+    paintAccum = flipped;
+  }
+
   function reprocessWithOrientation() {
     const src = loadedVideo || loadedImg;
     if (!src) return;
@@ -2318,21 +2352,41 @@ function buildGIF(w, h, frames, delayCs) {
 
   document.getElementById('rotateLeftBtn').addEventListener('click', () => {
     orientRotation = (orientRotation + 270) % 360;
+    orientHistory.push('rotateLeft');
+    rotatePaintAccumBy90(false);
     reprocessWithOrientation();
   });
   document.getElementById('rotateRightBtn').addEventListener('click', () => {
     orientRotation = (orientRotation + 90) % 360;
+    orientHistory.push('rotateRight');
+    rotatePaintAccumBy90(true);
     reprocessWithOrientation();
   });
   document.getElementById('flipHBtn').addEventListener('click', () => {
     orientFlipH = !orientFlipH;
+    orientHistory.push('flipH');
+    flipPaintAccum(true);
     reprocessWithOrientation();
   });
   document.getElementById('flipVBtn').addEventListener('click', () => {
     orientFlipV = !orientFlipV;
+    orientHistory.push('flipV');
+    flipPaintAccum(false);
     reprocessWithOrientation();
   });
   document.getElementById('resetOrientBtn').addEventListener('click', () => {
+    // paintAccum has no pristine source to replay from the way loadedImg
+    // does, so undo it by literally reversing the sequence of individual
+    // clicks that got it here — each step's own inverse is unambiguous
+    // (rotateLeft⁻¹=rotateRight, flip⁻¹=itself) regardless of what order
+    // rotates and flips were interleaved in.
+    while (orientHistory.length) {
+      const op = orientHistory.pop();
+      if (op === 'rotateRight') rotatePaintAccumBy90(false);
+      else if (op === 'rotateLeft') rotatePaintAccumBy90(true);
+      else if (op === 'flipH') flipPaintAccum(true);
+      else if (op === 'flipV') flipPaintAccum(false);
+    }
     orientRotation = 0; orientFlipH = false; orientFlipV = false;
     reprocessWithOrientation();
   });
@@ -2402,10 +2456,25 @@ function buildGIF(w, h, frames, delayCs) {
     oc.drawImage(img, -dw / 2, -dh / 2, dw, dh);
     oc.restore();
 
-    // Snapshot for the paint tool's "clear my drawing" button (see below)
+    // Snapshot for the paint tool's "clear my drawing" button (see below) —
+    // captured BEFORE paintAccum goes back on, so it always represents the
+    // oriented base image with no paint on it.
     pristineCanvas = document.createElement('canvas');
     pristineCanvas.width = w; pristineCanvas.height = h;
     pristineCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
+
+    // Re-apply the user's accumulated paint on top of the freshly (re)drawn
+    // base image. The orientation buttons already rotated/flipped paintAccum
+    // in lockstep (see rotatePaintAccumBy90/flipPaintAccum above), so by the
+    // time we get here its dimensions already match w×h and this is just a
+    // plain composite — on a brand-new upload paintAccum is null/blank, so
+    // this is a no-op there.
+    if (!paintAccum || paintAccum.width !== w || paintAccum.height !== h) {
+      paintAccum = document.createElement('canvas');
+      paintAccum.width = w; paintAccum.height = h;
+    }
+    oc.drawImage(paintAccum, 0, 0);
+
     // A new image invalidates any pending undo history from the last one.
     undoStack = [];
     paintUndoBtn.disabled = true;
@@ -2488,6 +2557,7 @@ function buildGIF(w, h, frames, delayCs) {
     const dw = rotated ? h : w, dh = rotated ? w : h;
     oc.drawImage(loadedVideo, -dw / 2, -dh / 2, dw, dh);
     oc.restore();
+    if (paintAccum) oc.drawImage(paintAccum, 0, 0);
     const pixels = oc.getImageData(0, 0, w, h).data;
     hslBuf = computeHslBuf(pixels, w, h);
     origImageData = new ImageData(pixels, w, h);
@@ -3614,14 +3684,36 @@ function buildGIF(w, h, frames, delayCs) {
   // captures "how it looked a moment ago" and pushes it onto undoStack so
   // paintUndoBtn can pop snapshots off one at a time. Capped at MAX_UNDO
   // (oldest dropped first) — the user asked for a handful of steps, not an
-  // unbounded history.
+  // unbounded history. Snapshots paintAccum alongside origCanvas (as a
+  // paired entry) so undo restores the persistent paint layer too — without
+  // that, undoing a stroke and then rotating would bring the "undone" paint
+  // back, since paintAccum would still have it.
   function snapshotForUndo() {
     const snap = document.createElement('canvas');
     snap.width = imgW; snap.height = imgH;
     snap.getContext('2d').drawImage(origCanvas, 0, 0);
-    undoStack.push(snap);
+    const paintSnap = document.createElement('canvas');
+    paintSnap.width = imgW; paintSnap.height = imgH;
+    if (paintAccum) paintSnap.getContext('2d').drawImage(paintAccum, 0, 0);
+    undoStack.push({ orig: snap, paint: paintSnap });
     if (undoStack.length > MAX_UNDO) undoStack.shift();
     paintUndoBtn.disabled = false;
+  }
+
+  // Copies the CURRENT origCanvas pixels into paintAccum, restricted to
+  // wherever maskCanvas (already alpha-masked to just the touched area) has
+  // nonzero alpha — capturing the actual final composited appearance
+  // (correct regardless of blend mode/opacity) rather than recomputing the
+  // blend a second time, which wouldn't match for non-'normal' blend modes.
+  function accumulatePaintFromMask(maskCanvas) {
+    if (!paintAccum) { paintAccum = document.createElement('canvas'); paintAccum.width = imgW; paintAccum.height = imgH; }
+    const tmp = document.createElement('canvas');
+    tmp.width = imgW; tmp.height = imgH;
+    const tctx = tmp.getContext('2d');
+    tctx.drawImage(origCanvas, 0, 0);
+    tctx.globalCompositeOperation = 'destination-in';
+    tctx.drawImage(maskCanvas, 0, 0);
+    paintAccum.getContext('2d').drawImage(tmp, 0, 0);
   }
 
   function paintStrokeColor() { return paintEraser ? '#ffffff' : paintColorS.value; }
@@ -3719,6 +3811,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.drawImage(strokeLayerCanvas, 0, 0);
     oc2.globalAlpha = 1;
     oc2.globalCompositeOperation = 'source-over';
+    accumulatePaintFromMask(strokeLayerCanvas);
     // One full recompute per stroke (not per segment) — see paintClearBtn
     // below for the same pattern on a similarly one-off operation.
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
@@ -3743,6 +3836,16 @@ function buildGIF(w, h, frames, delayCs) {
     snapshotForUndo();
     const oc2 = origCanvas.getContext('2d');
     const fontSize = Math.max(8, (+paintSizeS.value || 6) * 4);
+    // A plain full-alpha copy of the glyph shapes, built before the real
+    // (blended/translucent) draw below, so accumulatePaintFromMask() knows
+    // exactly which pixels this stamp touched regardless of blend mode.
+    ensureStrokeLayer();
+    const maskCtx = strokeLayerCanvas.getContext('2d');
+    maskCtx.clearRect(0, 0, imgW, imgH);
+    maskCtx.font = `${fontSize}px sans-serif`;
+    maskCtx.textBaseline = 'alphabetic';
+    maskCtx.fillStyle = '#000';
+    maskCtx.fillText(text, pos.x, pos.y);
     oc2.globalAlpha = paintAlpha();
     oc2.globalCompositeOperation = paintBlendS.value;
     oc2.font = `${fontSize}px sans-serif`;
@@ -3751,6 +3854,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.fillText(text, pos.x, pos.y);
     oc2.globalAlpha = 1;
     oc2.globalCompositeOperation = 'source-over';
+    accumulatePaintFromMask(strokeLayerCanvas);
     const metrics = oc2.measureText(text);
     const pad = 4;
     if (detailChk.checked) decompose(); // see the comment in endPaint() above — must run before refreshRegion()'s own drawOriginal() so that call is what ends up on screen
@@ -3865,6 +3969,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.drawImage(strokeLayerCanvas, 0, 0);
     oc2.globalAlpha = 1;
     oc2.globalCompositeOperation = 'source-over';
+    accumulatePaintFromMask(strokeLayerCanvas);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
     if (detailChk.checked) decompose(); // see the comment in endPaint() above
     drawOriginal();
@@ -3914,10 +4019,13 @@ function buildGIF(w, h, frames, delayCs) {
 
   paintUndoBtn.addEventListener('click', () => {
     if (!undoStack.length) return;
-    const snap = undoStack.pop();
+    const { orig: snap, paint: paintSnap } = undoStack.pop();
     const oc2 = origCanvas.getContext('2d');
     oc2.clearRect(0, 0, imgW, imgH);
     oc2.drawImage(snap, 0, 0);
+    if (!paintAccum) { paintAccum = document.createElement('canvas'); paintAccum.width = imgW; paintAccum.height = imgH; }
+    paintAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
+    paintAccum.getContext('2d').drawImage(paintSnap, 0, 0);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
     if (detailChk.checked) decompose(); // see the comment in endPaint() above
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
@@ -3933,6 +4041,7 @@ function buildGIF(w, h, frames, delayCs) {
     const oc2 = origCanvas.getContext('2d');
     oc2.clearRect(0, 0, imgW, imgH);
     oc2.drawImage(pristineCanvas, 0, 0);
+    if (paintAccum) paintAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
     if (detailChk.checked) decompose(); // see the comment in endPaint() above
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
@@ -3996,6 +4105,13 @@ function buildGIF(w, h, frames, delayCs) {
     const bctx = blank.getContext('2d');
     bctx.fillStyle = '#fff';
     bctx.fillRect(0, 0, w, h);
+    // Treat the blank canvas itself as "the loaded image" for orientation
+    // purposes — rotating a flat white square is a no-op by itself, but it
+    // lets reprocessWithOrientation() rebuild from it, so anything drawn on
+    // top (tracked separately in paintAccum) rotates correctly too.
+    loadedImg = blank; loadedName = '白紙';
+    document.getElementById('orientControls').style.display = 'block';
+    updateOrientResetBtn();
     processImage(blank, '白紙');
     // Desktop: nothing else to do with a blank canvas, so start drawing
     // right away. Mobile: screen space is precious and the paint toolbar
