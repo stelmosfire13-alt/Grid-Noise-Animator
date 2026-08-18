@@ -2259,6 +2259,8 @@ function buildGIF(w, h, frames, delayCs) {
     if (paintMode) paintModeBtn.click(); // a real upload should land in the normal view, not the blank-canvas paint mode
     orientRotation = 0; orientFlipH = false; orientFlipV = false;
     orientHistory = []; paintAccum = null;
+    adjCommitted = { brightness: 0, contrastFactor: 1, r: 0, g: 0, b: 0 };
+    adjSyncSlidersTo({ brightness: 0, contrast: 0, r: 0, g: 0, b: 0 });
     if (file.type.startsWith('video/')) loadVideoFile(file);
     else loadImageFile(file);
   }
@@ -3801,19 +3803,33 @@ function buildGIF(w, h, frames, delayCs) {
   }
 
   // ── Brightness/contrast/RGB tone adjustment ──────────────────────────────
-  // Applied to the whole image (background + everything painted so far),
-  // not just the current stroke — so it goes through origCanvas pixels
-  // directly rather than strokeLayerCanvas. Sliders are RELATIVE ("how much
-  // more to shift from what's on screen right now"), not an absolute state
-  // resynced from origCanvas: they snap back to 0 the moment a drag is
-  // committed (adjCommit(), on the 'change' event), so the next drag always
-  // starts from a clean baseline. This sidesteps a whole class of
-  // resync bugs an absolute/cumulative slider would need (Undo, "clear
-  // drawing", or a fresh upload would all have to remember to reset an
-  // absolute slider back to whatever the reverted-to image's own adjustment
-  // level was — with a relative, always-resets-to-0 slider there's nothing
-  // to resync, because the slider never claims to represent a persistent
-  // state in the first place).
+  // Applied to the whole image (background + everything painted so far), not
+  // just the current stroke — so it goes through origCanvas pixels directly
+  // rather than strokeLayerCanvas.
+  //
+  // Sliders show an ABSOLUTE, persistent amount (never snap back on their
+  // own) — only the リセット button zeroes them. Internally this is tracked
+  // as a DELTA machine: adjCommitted remembers what's already baked into
+  // origCanvas, and every drag/commit operates on (current slider reading −
+  // adjCommitted), applied on top of whatever origCanvas currently is. That
+  // "on top of the current canvas" part matters: if the user commits
+  // brightness +30, draws a brush stroke, then drags brightness to +50, the
+  // extra +20 must land on the canvas that now includes the stroke — not on
+  // a frozen pre-stroke snapshot — otherwise the stroke would silently lose
+  // the earlier brightness pass when the slider moves again.
+  //
+  // adjCommitted has no reliable meaning once origCanvas gets replaced out
+  // from under it by something else — undo, "clear drawing", or loading a
+  // new image all swap in pixels this adjustment history knows nothing
+  // about. Each of those resets adjCommitted (and the slider positions) back
+  // to neutral (see loadFile(), paintClearBtn, paintUndoBtn below) rather
+  // than trying to infer what the restored canvas's "true" adjustment level
+  // was. Orientation changes are the one exception that does NOT reset it:
+  // rotate/flip rebuild origCanvas from loadedImg + paintAccum, and this
+  // adjustment's own effect is already baked into paintAccum by the time
+  // that happens, so it keeps rotating right along with everything else.
+  let adjCommitted = { brightness: 0, contrastFactor: 1, r: 0, g: 0, b: 0 };
+
   function adjFactorForContrast(v) {
     const c = v * 2.55; // slider range [-100,100] -> classic contrast formula's expected [-255,255]
     return (259 * (c + 259)) / (255 * (259 - c));
@@ -3822,7 +3838,9 @@ function buildGIF(w, h, frames, delayCs) {
   // Pure pixel transform, shared by the live preview (reads from origCanvas,
   // writes to the visible ctx only) and the real commit (reads+writes
   // origCanvas) — so the two can never compute a different result from the
-  // same slider values.
+  // same delta. contrastFactor is itself already the RATIO to apply now
+  // (see currentAdjustDelta) — contrast composes multiplicatively around the
+  // shared 128 midpoint, unlike brightness/tone which compose by addition.
   function applyAdjustment(srcData, dstData, brightness, contrastFactor, rTone, gTone, bTone) {
     const tone = [rTone, gTone, bTone];
     for (let i = 0; i < srcData.length; i += 4) {
@@ -3837,15 +3855,23 @@ function buildGIF(w, h, frames, delayCs) {
     }
   }
 
-  function currentAdjustValues() {
+  // What still needs to be applied to origCanvas to bring it from
+  // "adjCommitted's baked-in amount" up to "what the sliders currently
+  // read" — this is what actually gets applied each time, both for the live
+  // preview and the real commit.
+  function currentAdjustDelta() {
     return {
-      brightness: +adjBrightS.value || 0,
-      contrastFactor: adjFactorForContrast(+adjContrastS.value || 0),
-      r: +adjRS.value || 0, g: +adjGS.value || 0, b: +adjBS.value || 0,
+      brightness: (+adjBrightS.value || 0) - adjCommitted.brightness,
+      contrastFactor: adjFactorForContrast(+adjContrastS.value || 0) / adjCommitted.contrastFactor,
+      r: (+adjRS.value || 0) - adjCommitted.r,
+      g: (+adjGS.value || 0) - adjCommitted.g,
+      b: (+adjBS.value || 0) - adjCommitted.b,
     };
   }
 
-  function adjIsNeutral(v) { return v.brightness === 0 && v.r === 0 && v.g === 0 && v.b === 0 && +adjContrastS.value === 0; }
+  function adjDeltaIsNeutral(d) {
+    return d.brightness === 0 && d.r === 0 && d.g === 0 && d.b === 0 && Math.abs(d.contrastFactor - 1) < 1e-9;
+  }
 
   // Live feedback while a slider is being dragged: paints the adjusted
   // result straight onto the visible canvas without touching origCanvas —
@@ -3854,11 +3880,11 @@ function buildGIF(w, h, frames, delayCs) {
   // of one stroke's layer.
   function previewAdjustment() {
     if (!paintMode || !origCanvas) return;
-    const v = currentAdjustValues();
-    if (adjIsNeutral(v)) { drawOriginal(); return; }
+    const d = currentAdjustDelta();
+    if (adjDeltaIsNeutral(d)) { drawOriginal(); return; }
     const src = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH);
     const out = ctx.createImageData(imgW, imgH);
-    applyAdjustment(src.data, out.data, v.brightness, v.contrastFactor, v.r, v.g, v.b);
+    applyAdjustment(src.data, out.data, d.brightness, d.contrastFactor, d.r, d.g, d.b);
     ctx.putImageData(out, 0, 0);
   }
 
@@ -3875,22 +3901,18 @@ function buildGIF(w, h, frames, delayCs) {
     return m;
   }
 
-  // Bakes the current slider values into origCanvas for real (mirroring the
+  // Bakes a given delta into origCanvas for real (mirroring the
   // endPaint()/doFill() commit pattern: snapshot for undo, mutate
   // origCanvas, accumulate into paintAccum so orientation changes keep
   // carrying the adjustment, recompute hslBuf, refresh detail-mode buffers).
-  // Then resets the sliders to neutral — see the comment above
-  // adjFactorForContrast for why relative-and-resetting was chosen over an
-  // absolute slider position.
-  function adjCommit() {
-    if (!paintMode || !hslBuf) return;
-    const v = currentAdjustValues();
-    if (adjIsNeutral(v)) return;
+  // Shared by the normal slider-release commit and the リセット button
+  // (which commits the delta back down to neutral).
+  function adjApplyDeltaToCanvas(d) {
     snapshotForUndo();
     const oc2 = origCanvas.getContext('2d');
     const src = oc2.getImageData(0, 0, imgW, imgH);
     const out = oc2.createImageData(imgW, imgH);
-    applyAdjustment(src.data, out.data, v.brightness, v.contrastFactor, v.r, v.g, v.b);
+    applyAdjustment(src.data, out.data, d.brightness, d.contrastFactor, d.r, d.g, d.b);
     oc2.putImageData(out, 0, 0);
     accumulatePaintFromMask(fullCanvasMask());
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
@@ -3899,24 +3921,61 @@ function buildGIF(w, h, frames, delayCs) {
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     computeImageStats();
     updateMLResistance();
-    adjResetSliders();
   }
 
-  function adjResetSliders() {
-    adjBrightS.value = 0; adjBrightV.textContent = '0';
-    adjContrastS.value = 0; adjContrastV.textContent = '0';
-    adjRS.value = 0; adjRV.textContent = '0';
-    adjGS.value = 0; adjGV.textContent = '0';
-    adjBS.value = 0; adjBV.textContent = '0';
+  function adjCommit() {
+    if (!paintMode || !hslBuf) return;
+    const d = currentAdjustDelta();
+    if (adjDeltaIsNeutral(d)) return;
+    adjApplyDeltaToCanvas(d);
+    adjCommitted = {
+      brightness: +adjBrightS.value || 0,
+      contrastFactor: adjFactorForContrast(+adjContrastS.value || 0),
+      r: +adjRS.value || 0, g: +adjGS.value || 0, b: +adjBS.value || 0,
+    };
   }
 
   function fmtSigned(v) { return (v > 0 ? '+' : '') + v; }
+
+  // Sets the slider DOM values/labels to reflect a given committed state,
+  // WITHOUT touching origCanvas or adjCommitted — used to sync the UI back
+  // to neutral wherever adjCommitted itself gets reset to neutral (see the
+  // big comment above adjCommitted for why loadFile/paintClearBtn/
+  // paintUndoBtn all do this pair together, never one without the other).
+  function adjSyncSlidersTo(v) {
+    adjBrightS.value = v.brightness; adjBrightV.textContent = fmtSigned(v.brightness);
+    adjContrastS.value = v.contrast; adjContrastV.textContent = fmtSigned(v.contrast);
+    adjRS.value = v.r; adjRV.textContent = fmtSigned(v.r);
+    adjGS.value = v.g; adjGV.textContent = fmtSigned(v.g);
+    adjBS.value = v.b; adjBV.textContent = fmtSigned(v.b);
+  }
 
   [[adjBrightS, adjBrightV], [adjContrastS, adjContrastV], [adjRS, adjRV], [adjGS, adjGV], [adjBS, adjBV]].forEach(([slider, label]) => {
     slider.addEventListener('input', () => { label.textContent = fmtSigned(+slider.value); previewAdjustment(); });
     slider.addEventListener('change', adjCommit);
   });
-  adjResetBtn.addEventListener('click', () => { adjResetSliders(); if (paintMode) drawOriginal(); });
+
+  // Cancels any in-progress (uncommitted) drag by snapping the sliders back
+  // to adjCommitted, AND — if there's a real baked-in adjustment already
+  // sitting in origCanvas — commits the inverse delta to strip it back out
+  // to neutral (its own undo-able step, via the same pipeline as any other
+  // commit).
+  adjResetBtn.addEventListener('click', () => {
+    const neutral = { brightness: 0, contrastFactor: 1, r: 0, g: 0, b: 0 };
+    if (paintMode && hslBuf && !adjDeltaIsNeutralBetween(adjCommitted, neutral)) {
+      adjApplyDeltaToCanvas({
+        brightness: neutral.brightness - adjCommitted.brightness,
+        contrastFactor: neutral.contrastFactor / adjCommitted.contrastFactor,
+        r: neutral.r - adjCommitted.r, g: neutral.g - adjCommitted.g, b: neutral.b - adjCommitted.b,
+      });
+      adjCommitted = neutral;
+    }
+    adjSyncSlidersTo({ brightness: 0, contrast: 0, r: 0, g: 0, b: 0 });
+    if (paintMode) drawOriginal(); // discards any uncommitted live preview even when nothing was actually baked in
+  });
+  function adjDeltaIsNeutralBetween(a, b) {
+    return a.brightness === b.brightness && a.r === b.r && a.g === b.g && a.b === b.b && Math.abs(a.contrastFactor - b.contrastFactor) < 1e-9;
+  }
 
   function paintStrokeColor() { return paintEraser ? '#ffffff' : paintColorS.value; }
   function paintAlpha() { return (+paintAlphaS.value || 100) / 100; }
@@ -4234,6 +4293,12 @@ function buildGIF(w, h, frames, delayCs) {
     drawOriginal();
     computeImageStats();
     updateMLResistance();
+    // Undo can restore a canvas from before/after/mid any past adjustment
+    // commit, and doesn't record what adjCommitted was at that point — so
+    // rather than guess, treat the restored canvas as a fresh baseline the
+    // sliders know nothing about yet (see the comment above adjCommitted).
+    adjCommitted = { brightness: 0, contrastFactor: 1, r: 0, g: 0, b: 0 };
+    adjSyncSlidersTo({ brightness: 0, contrast: 0, r: 0, g: 0, b: 0 });
     paintUndoBtn.disabled = undoStack.length === 0; // stays enabled while more undo steps remain
   });
 
@@ -4250,6 +4315,10 @@ function buildGIF(w, h, frames, delayCs) {
     drawOriginal();
     computeImageStats();
     updateMLResistance();
+    // pristineCanvas has zero adjustment baked in by definition, so this is
+    // always a real reset to neutral — see the comment above adjCommitted.
+    adjCommitted = { brightness: 0, contrastFactor: 1, r: 0, g: 0, b: 0 };
+    adjSyncSlidersTo({ brightness: 0, contrast: 0, r: 0, g: 0, b: 0 });
   });
 
   // Saves the drawing itself (origCanvas — pre-noise, whatever's actually
