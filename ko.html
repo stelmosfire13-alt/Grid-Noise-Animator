@@ -278,6 +278,18 @@
           <div class="dz-name" id="dzName"></div>
         </div>
       </div>
+      <div id="orientControls" style="display:none;margin-top:8px;">
+        <div style="font-size:11px;color:#888;margin-bottom:5px;line-height:1.4;">
+          이미지의 방향을 바꿉니다(방향이 바뀐 이미지는 AI가 인식하기 어려울 수 있지만, 사람은 낯설게 느껴질 뿐 여전히 이해할 수 있습니다).
+        </div>
+        <div style="display:flex;gap:5px;">
+          <button class="btn btn-gray" id="rotateLeftBtn" style="flex:1;font-size:0.82rem;">⟲ 90°</button>
+          <button class="btn btn-gray" id="rotateRightBtn" style="flex:1;font-size:0.82rem;">⟳ 90°</button>
+          <button class="btn btn-gray" id="flipHBtn" style="flex:1;font-size:0.82rem;">⇋ 좌우</button>
+          <button class="btn btn-gray" id="flipVBtn" style="flex:1;font-size:0.82rem;">⇕ 상하</button>
+        </div>
+        <button class="btn btn-gray btn-full" id="resetOrientBtn" style="margin-top:5px;font-size:0.78rem;" disabled>방향 초기화</button>
+      </div>
       <div id="videoModeNotice" style="display:none;margin-top:8px;font-size:11px;color:#888;line-height:1.4;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;">
         <strong style="color:var(--text);">동영상 모드</strong> (<span id="videoModeInfo"></span>): 미리보기는 첫 프레임만 표시됩니다. "출력"을 누르면 모든 프레임에 노이즈 효과가 적용됩니다(시간이 다소 걸릴 수 있습니다). 세부 모드와 WebM 출력은 지원되지 않습니다.
       </div>
@@ -376,6 +388,23 @@
         <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
           프레임 평균 후에도 남는 고정 패턴을 삽입합니다. 사람 눈에는 보이지 않지만 AI 특징 추출을 방해합니다.
         </div>
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="ocrChk" style="width:14px;height:14px">
+          <span>이미지에 문자 삽입(ChatGPT 등에서 읽을 수 있는 형식)</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          실제 문자를 옅은 대비로 이미지에 채웁니다. 프레임 평균에 의존하지 않고 한 프레임만으로도 확인할 수 있습니다.
+        </div>
+        <input type="text" id="msgText" value="NO-AI-TRAINING" maxlength="32" style="width:100%;margin-top:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:6px 8px;font-size:0.82rem;box-sizing:border-box;">
+        <div style="font-size:10px;color:#777;margin-top:3px;text-align:right;"><span id="msgLenV">15</span>/32</div>
+        <div class="field-label" style="margin-top:8px">문자 진하기 <em id="ocrAmpV">22</em>/255</div>
+        <input type="range" id="ocrAmpS" min="2" max="60" value="22">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;margin-top:6px;">
+          <input type="checkbox" id="ocrDarkChk" style="width:14px;height:14px">
+          <span>문자를 어둡게(기본값은 흰색 문자)</span>
+        </label>
       </div>
     </div>
 
@@ -759,6 +788,10 @@ function buildGIF(w, h, frames, delayCs) {
   const litS     = document.getElementById('litS');
   const satS     = document.getElementById('satS');
   const mlGuard  = document.getElementById('mlGuard');
+  const msgText  = document.getElementById('msgText');
+  const ocrChk   = document.getElementById('ocrChk');
+  const ocrAmpS  = document.getElementById('ocrAmpS');
+  const ocrDarkChk = document.getElementById('ocrDarkChk');
   const blurChk  = document.getElementById('blurChk');
   const blurS    = document.getElementById('blurS');
   const warpChk    = document.getElementById('warpChk');
@@ -812,6 +845,18 @@ function buildGIF(w, h, frames, delayCs) {
   document.getElementById('warpChk').addEventListener('change', redrawIfStopped);
   document.getElementById('noiseSel').addEventListener('change', redrawIfStopped);
   mlGuard.addEventListener('change', redrawIfStopped);
+  msgText.addEventListener('input', () => {
+    document.getElementById('msgLenV').textContent = msgText.value.length;
+    regenerateOverlay();
+    redrawIfStopped();
+  });
+  ocrChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
+  ocrAmpS.addEventListener('input', () => {
+    document.getElementById('ocrAmpV').textContent = ocrAmpS.value;
+    regenerateOverlay();
+    redrawIfStopped();
+  });
+  ocrDarkChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
 
   (function () {
     const THUMB_HIT = 32;
@@ -1171,6 +1216,11 @@ function buildGIF(w, h, frames, delayCs) {
   let imgW = 0, imgH = 0;
   let loadedVideo  = null;
   let videoDuration = 0;
+  let loadedImg = null, loadedName = '';
+  let orientRotation = 0;
+  let orientFlipH = false, orientFlipV = false;
+  let paintAccum = null;
+  let orientHistory = [];
 
   let animId      = null;
   let playing     = false;
@@ -1265,6 +1315,29 @@ function buildGIF(w, h, frames, delayCs) {
     return [h * 60, s * 100, l * 100];
   }
 
+  function renderTextBiasMask(message, w, h) {
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d');
+    octx.fillStyle = '#000';
+    octx.fillRect(0, 0, w, h);
+    const fontSize = Math.max(10, Math.round(Math.min(w, h) * 0.06));
+    octx.font = `bold ${fontSize}px monospace`;
+    octx.fillStyle = '#fff';
+    octx.textBaseline = 'top';
+    const label = message + '   ';
+    const tw = Math.max(1, octx.measureText(label).width);
+    const lineH = fontSize * 1.7;
+    for (let y = -lineH, row = 0; y < h + lineH; y += lineH, row++) {
+      const rowOffset = (row % 2) * (tw / 2);
+      for (let x = -tw - rowOffset; x < w; x += tw) octx.fillText(label, x, y);
+    }
+    const data = octx.getImageData(0, 0, w, h).data;
+    const mask = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) mask[i] = data[i * 4] / 255;
+    return mask;
+  }
+
   // ── ML-protection overlay ────────────────────────────────────────────────
   function generateOverlay(pixels, w, h) {
     const overlay = new Float32Array(w * h * 3);
@@ -1285,6 +1358,9 @@ function buildGIF(w, h, frames, delayCs) {
     const N   = 5;
     const a   = AMP / N;
 
+    const ocrAmp  = (ocrDarkChk.checked ? -1 : 1) * +ocrAmpS.value;
+    const ocrMask = (ocrChk.checked && msgText.value) ? renderTextBiasMask(msgText.value, w, h) : null;
+
     for (let ch = 0; ch < 3; ch++) {
       for (let k = 0; k < N; k++) {
         const period = 2 + rand() * 3;
@@ -1301,6 +1377,13 @@ function buildGIF(w, h, frames, delayCs) {
           }
         }
       }
+
+      if (ocrMask) {
+        for (let i = 0; i < w * h; i++) {
+          if (ocrMask[i] > 0) overlay[i * 3 + ch] += ocrMask[i] * ocrAmp;
+        }
+      }
+
       let sum = 0;
       for (let i = ch; i < overlay.length; i += 3) sum += overlay[i];
       const mean = sum / (w * h);
@@ -1308,6 +1391,12 @@ function buildGIF(w, h, frames, delayCs) {
     }
 
     return overlay;
+  }
+
+  function regenerateOverlay() {
+    if (!origCanvas) return;
+    const pixels = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH).data;
+    fixedOverlay = generateOverlay(pixels, imgW, imgH);
   }
 
   // ── File loading ───────────────────────────────────────────────────────────
@@ -1324,6 +1413,8 @@ function buildGIF(w, h, frames, delayCs) {
   function loadFile(file) {
     stopAll();
     if (paintMode) paintModeBtn.click();
+    orientRotation = 0; orientFlipH = false; orientFlipV = false;
+    orientHistory = []; paintAccum = null;
     if (file.type.startsWith('video/')) loadVideoFile(file);
     else loadImageFile(file);
   }
@@ -1339,7 +1430,12 @@ function buildGIF(w, h, frames, delayCs) {
       dzThumb.src = url; dzThumb.style.display = 'block';
       dzName.textContent = file.name; dzName.style.display = 'block';
       const img = new Image();
-      img.onload = () => processImage(img, file.name);
+      img.onload = () => {
+        loadedImg = img; loadedName = file.name;
+        document.getElementById('orientControls').style.display = 'block';
+        updateOrientResetBtn();
+        processImage(img, file.name);
+      };
       img.src = url;
     };
     reader.readAsDataURL(file);
@@ -1361,6 +1457,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   function loadVideoFile(file) {
     setStatus('동영상을 불러오는 중...');
+    loadedImg = null;
     dzThumb.style.display = 'none';
     dzName.textContent = file.name; dzName.style.display = 'block';
     const video = document.createElement('video');
@@ -1370,9 +1467,10 @@ function buildGIF(w, h, frames, delayCs) {
     video.onerror = () => setStatus('동영상을 불러오지 못했습니다');
     video.onloadedmetadata = () => { video.currentTime = 0; };
     video.onseeked = () => {
-      loadedVideo = video;
+      loadedVideo = video; loadedName = file.name;
       videoDuration = video.duration || 0;
       setVideoModeRestrictions(true);
+      document.getElementById('orientControls').style.display = 'block';
       document.getElementById('videoModeNotice').style.display = 'block';
       document.getElementById('videoModeInfo').textContent =
         `${video.videoWidth}×${video.videoHeight}, ${videoDuration.toFixed(1)}초`;
@@ -1380,11 +1478,121 @@ function buildGIF(w, h, frames, delayCs) {
       const maxDur = Math.max(1, Math.ceil(videoDuration));
       durIn.max = maxDur;
       if (+durIn.value > maxDur) durIn.value = maxDur;
+      updateOrientResetBtn();
       processImage(video, file.name);
       dzThumb.src = canvas.toDataURL('image/png'); dzThumb.style.display = 'block';
     };
     video.src = URL.createObjectURL(file);
   }
+
+  function updateOrientResetBtn() {
+    document.getElementById('resetOrientBtn').disabled =
+      orientRotation === 0 && !orientFlipH && !orientFlipV;
+  }
+
+  function rotatePaintAccumBy90(clockwise) {
+    if (!paintAccum) return;
+    const oldW = paintAccum.width, oldH = paintAccum.height;
+    const rotated = document.createElement('canvas');
+    rotated.width = oldH; rotated.height = oldW;
+    const rctx = rotated.getContext('2d');
+    rctx.save();
+    rctx.translate(oldH / 2, oldW / 2);
+    rctx.rotate((clockwise ? 90 : -90) * Math.PI / 180);
+    rctx.drawImage(paintAccum, -oldW / 2, -oldH / 2);
+    rctx.restore();
+    paintAccum = rotated;
+  }
+  function flipPaintAccum(horizontal) {
+    if (!paintAccum) return;
+    const w = paintAccum.width, h = paintAccum.height;
+    const flipped = document.createElement('canvas');
+    flipped.width = w; flipped.height = h;
+    const fctx = flipped.getContext('2d');
+    fctx.save();
+    fctx.translate(w / 2, h / 2);
+    fctx.scale(horizontal ? -1 : 1, horizontal ? 1 : -1);
+    fctx.drawImage(paintAccum, -w / 2, -h / 2);
+    fctx.restore();
+    paintAccum = flipped;
+  }
+
+  function rotateRegionPolygonsBy90(clockwise, oldW, oldH) {
+    const tf = clockwise
+      ? p => ({ x: oldH - p.y, y: p.x })
+      : p => ({ x: p.y, y: oldW - p.x });
+    regionPolygons = regionPolygons.map(poly => poly.map(tf));
+    regionPoints = regionPoints.map(tf);
+  }
+  function flipRegionPolygons(horizontal, w, h) {
+    const tf = horizontal
+      ? p => ({ x: w - p.x, y: p.y })
+      : p => ({ x: p.x, y: h - p.y });
+    regionPolygons = regionPolygons.map(poly => poly.map(tf));
+    regionPoints = regionPoints.map(tf);
+  }
+
+  function reprocessWithOrientation() {
+    const src = loadedVideo || loadedImg;
+    if (!src) return;
+    stopAll();
+    updateOrientResetBtn();
+    processImage(src, loadedName);
+    if (regionPolygons.length) computeRegionMask(); else regionMask = null;
+    drawRegionOverlay();
+  }
+
+  document.getElementById('rotateLeftBtn').addEventListener('click', () => {
+    orientRotation = (orientRotation + 270) % 360;
+    orientHistory.push('rotateLeft');
+    rotatePaintAccumBy90(false);
+    rotateRegionPolygonsBy90(false, imgW, imgH);
+    reprocessWithOrientation();
+  });
+  document.getElementById('rotateRightBtn').addEventListener('click', () => {
+    orientRotation = (orientRotation + 90) % 360;
+    orientHistory.push('rotateRight');
+    rotatePaintAccumBy90(true);
+    rotateRegionPolygonsBy90(true, imgW, imgH);
+    reprocessWithOrientation();
+  });
+  document.getElementById('flipHBtn').addEventListener('click', () => {
+    orientFlipH = !orientFlipH;
+    orientHistory.push('flipH');
+    flipPaintAccum(true);
+    flipRegionPolygons(true, imgW, imgH);
+    reprocessWithOrientation();
+  });
+  document.getElementById('flipVBtn').addEventListener('click', () => {
+    orientFlipV = !orientFlipV;
+    orientHistory.push('flipV');
+    flipPaintAccum(false);
+    flipRegionPolygons(false, imgW, imgH);
+    reprocessWithOrientation();
+  });
+  document.getElementById('resetOrientBtn').addEventListener('click', () => {
+    let curW = imgW, curH = imgH;
+    while (orientHistory.length) {
+      const op = orientHistory.pop();
+      if (op === 'rotateRight') {
+        rotatePaintAccumBy90(false);
+        rotateRegionPolygonsBy90(false, curW, curH);
+        [curW, curH] = [curH, curW];
+      } else if (op === 'rotateLeft') {
+        rotatePaintAccumBy90(true);
+        rotateRegionPolygonsBy90(true, curW, curH);
+        [curW, curH] = [curH, curW];
+      } else if (op === 'flipH') {
+        flipPaintAccum(true);
+        flipRegionPolygons(true, curW, curH);
+      } else if (op === 'flipV') {
+        flipPaintAccum(false);
+        flipRegionPolygons(false, curW, curH);
+      }
+    }
+    orientRotation = 0; orientFlipH = false; orientFlipV = false;
+    reprocessWithOrientation();
+  });
 
   // ── Image processing ──────────────────────────────────────────────────────
   function mediaNaturalWidth(src)  { return src.videoWidth  || src.naturalWidth  || src.width; }
@@ -1406,7 +1614,9 @@ function buildGIF(w, h, frames, delayCs) {
   }
 
   function processImage(img, name) {
-    let w = mediaNaturalWidth(img), h = mediaNaturalHeight(img);
+    const rotated = orientRotation === 90 || orientRotation === 270;
+    let w = rotated ? mediaNaturalHeight(img) : mediaNaturalWidth(img);
+    let h = rotated ? mediaNaturalWidth(img)  : mediaNaturalHeight(img);
     if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
     w = Math.max(COLS, Math.round(w / COLS) * COLS);
     h = Math.max(ROWS, Math.round(h / ROWS) * ROWS);
@@ -1418,11 +1628,24 @@ function buildGIF(w, h, frames, delayCs) {
     origCanvas = document.createElement('canvas');
     origCanvas.width = w; origCanvas.height = h;
     const oc = origCanvas.getContext('2d');
-    oc.drawImage(img, 0, 0, w, h);
+    oc.save();
+    oc.translate(w / 2, h / 2);
+    oc.scale(orientFlipH ? -1 : 1, orientFlipV ? -1 : 1);
+    oc.rotate(orientRotation * Math.PI / 180);
+    const dw = rotated ? h : w, dh = rotated ? w : h;
+    oc.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    oc.restore();
 
     pristineCanvas = document.createElement('canvas');
     pristineCanvas.width = w; pristineCanvas.height = h;
     pristineCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
+
+    if (!paintAccum || paintAccum.width !== w || paintAccum.height !== h) {
+      paintAccum = document.createElement('canvas');
+      paintAccum.width = w; paintAccum.height = h;
+    }
+    oc.drawImage(paintAccum, 0, 0);
+
     undoStack = [];
     paintUndoBtn.disabled = true;
 
@@ -1481,8 +1704,16 @@ function buildGIF(w, h, frames, delayCs) {
   async function prepareVideoFrame(timeSec) {
     await seekVideoFrame(loadedVideo, timeSec);
     const w = imgW, h = imgH;
+    const rotated = orientRotation === 90 || orientRotation === 270;
     const oc = origCanvas.getContext('2d');
-    oc.drawImage(loadedVideo, 0, 0, w, h);
+    oc.save();
+    oc.translate(w / 2, h / 2);
+    oc.scale(orientFlipH ? -1 : 1, orientFlipV ? -1 : 1);
+    oc.rotate(orientRotation * Math.PI / 180);
+    const dw = rotated ? h : w, dh = rotated ? w : h;
+    oc.drawImage(loadedVideo, -dw / 2, -dh / 2, dw, dh);
+    oc.restore();
+    if (paintAccum) oc.drawImage(paintAccum, 0, 0);
     const pixels = oc.getImageData(0, 0, w, h).data;
     hslBuf = computeHslBuf(pixels, w, h);
     origImageData = new ImageData(pixels, w, h);
@@ -2546,9 +2777,23 @@ function buildGIF(w, h, frames, delayCs) {
     const snap = document.createElement('canvas');
     snap.width = imgW; snap.height = imgH;
     snap.getContext('2d').drawImage(origCanvas, 0, 0);
-    undoStack.push(snap);
+    const paintSnap = document.createElement('canvas');
+    paintSnap.width = imgW; paintSnap.height = imgH;
+    if (paintAccum) paintSnap.getContext('2d').drawImage(paintAccum, 0, 0);
+    undoStack.push({ orig: snap, paint: paintSnap });
     if (undoStack.length > MAX_UNDO) undoStack.shift();
     paintUndoBtn.disabled = false;
+  }
+
+  function accumulatePaintFromMask(maskCanvas) {
+    if (!paintAccum) { paintAccum = document.createElement('canvas'); paintAccum.width = imgW; paintAccum.height = imgH; }
+    const tmp = document.createElement('canvas');
+    tmp.width = imgW; tmp.height = imgH;
+    const tctx = tmp.getContext('2d');
+    tctx.drawImage(origCanvas, 0, 0);
+    tctx.globalCompositeOperation = 'destination-in';
+    tctx.drawImage(maskCanvas, 0, 0);
+    paintAccum.getContext('2d').drawImage(tmp, 0, 0);
   }
 
   function paintStrokeColor() { return paintEraser ? '#ffffff' : paintColorS.value; }
@@ -2635,6 +2880,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.drawImage(strokeLayerCanvas, 0, 0);
     oc2.globalAlpha = 1;
     oc2.globalCompositeOperation = 'source-over';
+    accumulatePaintFromMask(strokeLayerCanvas);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
     if (detailChk.checked) decompose();
     drawOriginal();
@@ -2650,6 +2896,13 @@ function buildGIF(w, h, frames, delayCs) {
     snapshotForUndo();
     const oc2 = origCanvas.getContext('2d');
     const fontSize = Math.max(8, (+paintSizeS.value || 6) * 4);
+    ensureStrokeLayer();
+    const maskCtx = strokeLayerCanvas.getContext('2d');
+    maskCtx.clearRect(0, 0, imgW, imgH);
+    maskCtx.font = `${fontSize}px sans-serif`;
+    maskCtx.textBaseline = 'alphabetic';
+    maskCtx.fillStyle = '#000';
+    maskCtx.fillText(text, pos.x, pos.y);
     oc2.globalAlpha = paintAlpha();
     oc2.globalCompositeOperation = paintBlendS.value;
     oc2.font = `${fontSize}px sans-serif`;
@@ -2658,6 +2911,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.fillText(text, pos.x, pos.y);
     oc2.globalAlpha = 1;
     oc2.globalCompositeOperation = 'source-over';
+    accumulatePaintFromMask(strokeLayerCanvas);
     const metrics = oc2.measureText(text);
     const pad = 4;
     if (detailChk.checked) decompose();
@@ -2744,6 +2998,7 @@ function buildGIF(w, h, frames, delayCs) {
     oc2.drawImage(strokeLayerCanvas, 0, 0);
     oc2.globalAlpha = 1;
     oc2.globalCompositeOperation = 'source-over';
+    accumulatePaintFromMask(strokeLayerCanvas);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
     if (detailChk.checked) decompose();
     drawOriginal();
@@ -2785,10 +3040,13 @@ function buildGIF(w, h, frames, delayCs) {
 
   paintUndoBtn.addEventListener('click', () => {
     if (!undoStack.length) return;
-    const snap = undoStack.pop();
+    const { orig: snap, paint: paintSnap } = undoStack.pop();
     const oc2 = origCanvas.getContext('2d');
     oc2.clearRect(0, 0, imgW, imgH);
     oc2.drawImage(snap, 0, 0);
+    if (!paintAccum) { paintAccum = document.createElement('canvas'); paintAccum.width = imgW; paintAccum.height = imgH; }
+    paintAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
+    paintAccum.getContext('2d').drawImage(paintSnap, 0, 0);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
     if (detailChk.checked) decompose();
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
@@ -2804,6 +3062,7 @@ function buildGIF(w, h, frames, delayCs) {
     const oc2 = origCanvas.getContext('2d');
     oc2.clearRect(0, 0, imgW, imgH);
     oc2.drawImage(pristineCanvas, 0, 0);
+    if (paintAccum) paintAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
     hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
     if (detailChk.checked) decompose();
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
@@ -2858,6 +3117,9 @@ function buildGIF(w, h, frames, delayCs) {
     const bctx = blank.getContext('2d');
     bctx.fillStyle = '#fff';
     bctx.fillRect(0, 0, w, h);
+    loadedImg = blank; loadedName = '백지';
+    document.getElementById('orientControls').style.display = 'block';
+    updateOrientResetBtn();
     processImage(blank, '백지');
     if (window.innerWidth > 680) paintModeBtn.click();
   }
