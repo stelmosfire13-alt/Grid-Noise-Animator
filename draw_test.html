@@ -1282,32 +1282,35 @@
           <button type="button" class="btn btn-gray" id="paintTextModeBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔤 文字を置く</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:8px;">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <label style="font-size:12px;color:var(--muted);">明るさ</label>
-            <input type="range" id="adjBrightS" min="-100" max="100" value="0" style="width:70px;">
-            <em id="adjBrightV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+          <button type="button" class="btn btn-gray" id="adjModeBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🎨 色調補正</button>
+          <div id="adjSliders" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);">明るさ</label>
+              <input type="range" id="adjBrightS" min="-100" max="100" value="0" style="width:70px;">
+              <em id="adjBrightV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);">コントラスト</label>
+              <input type="range" id="adjContrastS" min="-100" max="100" value="0" style="width:70px;">
+              <em id="adjContrastV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);">色調 R</label>
+              <input type="range" id="adjRS" min="-100" max="100" value="0" style="width:60px;">
+              <em id="adjRV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);">G</label>
+              <input type="range" id="adjGS" min="-100" max="100" value="0" style="width:60px;">
+              <em id="adjGV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);">B</label>
+              <input type="range" id="adjBS" min="-100" max="100" value="0" style="width:60px;">
+              <em id="adjBV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+            </div>
+            <button type="button" class="btn btn-blue" id="adjConfirmBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">✓ 確定</button>
           </div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <label style="font-size:12px;color:var(--muted);">コントラスト</label>
-            <input type="range" id="adjContrastS" min="-100" max="100" value="0" style="width:70px;">
-            <em id="adjContrastV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <label style="font-size:12px;color:var(--muted);">色調 R</label>
-            <input type="range" id="adjRS" min="-100" max="100" value="0" style="width:60px;">
-            <em id="adjRV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <label style="font-size:12px;color:var(--muted);">G</label>
-            <input type="range" id="adjGS" min="-100" max="100" value="0" style="width:60px;">
-            <em id="adjGV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <label style="font-size:12px;color:var(--muted);">B</label>
-            <input type="range" id="adjBS" min="-100" max="100" value="0" style="width:60px;">
-            <em id="adjBV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
-          </div>
-          <button type="button" class="btn btn-gray" id="adjResetBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">リセット</button>
         </div>
       </div>
       <div id="mlStats" style="display:none;padding-top:5px;font-size:0.73rem;">
@@ -2259,8 +2262,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (paintMode) paintModeBtn.click(); // a real upload should land in the normal view, not the blank-canvas paint mode
     orientRotation = 0; orientFlipH = false; orientFlipV = false;
     orientHistory = []; paintAccum = null;
-    adjCommitted = { brightness: 0, contrastFactor: 1, r: 0, g: 0, b: 0 };
-    adjSyncSlidersTo({ brightness: 0, contrast: 0, r: 0, g: 0, b: 0 });
+    adjCancelSession();
     if (file.type.startsWith('video/')) loadVideoFile(file);
     else loadImageFile(file);
   }
@@ -3241,7 +3243,7 @@ function buildGIF(w, h, frames, delayCs) {
   // time the whole script (including that declaration) has executed.
   overlay.addEventListener('mousedown', e => {
     const pos = overlayToImage(e);
-    if (paintMode) { routePaintClick(pos); } else startDraw(pos);
+    if (paintMode) { if (!colorAdjustMode) routePaintClick(pos); } else startDraw(pos);
   });
   overlay.addEventListener('mousemove', e => {
     const pos = overlayToImage(e);
@@ -3267,7 +3269,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (!drawMode && !paintMode) return;
     e.preventDefault();
     const pos = touchPos(e);
-    if (paintMode) { routePaintClick(pos); } else startDraw(pos);
+    if (paintMode) { if (!colorAdjustMode) routePaintClick(pos); } else startDraw(pos);
   }, { passive: false });
   overlay.addEventListener('touchmove', e => {
     if (!isDrawing && !isPainting) return;
@@ -3748,7 +3750,11 @@ function buildGIF(w, h, frames, delayCs) {
   const adjRS = document.getElementById('adjRS'), adjRV = document.getElementById('adjRV');
   const adjGS = document.getElementById('adjGS'), adjGV = document.getElementById('adjGV');
   const adjBS = document.getElementById('adjBS'), adjBV = document.getElementById('adjBV');
-  const adjResetBtn  = document.getElementById('adjResetBtn');
+  const adjModeBtn    = document.getElementById('adjModeBtn');
+  const adjSliders    = document.getElementById('adjSliders');
+  const adjConfirmBtn = document.getElementById('adjConfirmBtn');
+  const _adjOff = '🎨 色調補正';
+  const _adjOn  = '🎨 色調補正中…';
   const _pmOff = '🖌 お絵描き';
   const _pmOn  = '🖌 お絵描き中…';
   const _eraserOff = '消しゴム';
@@ -3807,40 +3813,40 @@ function buildGIF(w, h, frames, delayCs) {
   // just the current stroke — so it goes through origCanvas pixels directly
   // rather than strokeLayerCanvas.
   //
-  // Sliders show an ABSOLUTE, persistent amount (never snap back on their
-  // own) — only the リセット button zeroes them. Internally this is tracked
-  // as a DELTA machine: adjCommitted remembers what's already baked into
-  // origCanvas, and every drag/commit operates on (current slider reading −
-  // adjCommitted), applied on top of whatever origCanvas currently is. That
-  // "on top of the current canvas" part matters: if the user commits
-  // brightness +30, draws a brush stroke, then drags brightness to +50, the
-  // extra +20 must land on the canvas that now includes the stroke — not on
-  // a frozen pre-stroke snapshot — otherwise the stroke would silently lose
-  // the earlier brightness pass when the slider moves again.
+  // Runs as an explicit session, entered/exited via adjModeBtn, rather than
+  // sliders that are just always live: clicking the button snapshots the
+  // CURRENT origCanvas once as adjBaseSnapshot, and every slider drag for
+  // the rest of the session recomputes the FULL transform fresh from that
+  // one untouched snapshot — never from origCanvas itself, and never
+  // incrementally from a previous drag's result. origCanvas is only
+  // actually mutated once, when 確定 (Confirm) is pressed.
   //
-  // adjCommitted has no reliable meaning once origCanvas gets replaced out
-  // from under it by something else — undo, "clear drawing", or loading a
-  // new image all swap in pixels this adjustment history knows nothing
-  // about. Each of those resets adjCommitted (and the slider positions) back
-  // to neutral (see loadFile(), paintClearBtn, paintUndoBtn below) rather
-  // than trying to infer what the restored canvas's "true" adjustment level
-  // was. Orientation changes are the one exception that does NOT reset it:
-  // rotate/flip rebuild origCanvas from loadedImg + paintAccum, and this
-  // adjustment's own effect is already baked into paintAccum by the time
-  // that happens, so it keeps rotating right along with everything else.
-  let adjCommitted = { brightness: 0, contrastFactor: 1, r: 0, g: 0, b: 0 };
+  // This matters because contrast is a per-8-bit-pixel clamp
+  // (Uint8ClampedArray rounds and clips to [0,255] on every write): an
+  // earlier version applied adjustments incrementally on top of whatever
+  // origCanvas currently was, committing on every slider release. Dragging
+  // contrast to its max clips most pixels to hard 0/255, which is a genuine
+  // loss of information, not just a visual extreme — and once that commit
+  // landed, dragging contrast back down didn't recover the original spread,
+  // because there was nothing left to recover from (a second commit could
+  // only pull the already-clipped 0/255 values back toward 128, collapsing
+  // the whole image toward a flat mid-gray — exactly the bug this was
+  // rewritten to fix). Recomputing fresh from one held-onto pre-session
+  // snapshot on every drag sidesteps this entirely: dragging back to 0
+  // exactly reproduces adjBaseSnapshot, because "0" always means "no
+  // transform," never "undo whatever the last confirmed pass did."
+  let adjBaseSnapshot = null; // canvas snapshot of origCanvas as it was when this session started; null while inactive
+  let colorAdjustMode = false;
 
   function adjFactorForContrast(v) {
     const c = v * 2.55; // slider range [-100,100] -> classic contrast formula's expected [-255,255]
-    return (259 * (c + 259)) / (255 * (259 - c));
+    return (259 * (c + 255)) / (255 * (259 - c)); // at c=0 this is exactly 259*255/(255*259) = 1 — verified, not approximate
   }
 
-  // Pure pixel transform, shared by the live preview (reads from origCanvas,
-  // writes to the visible ctx only) and the real commit (reads+writes
-  // origCanvas) — so the two can never compute a different result from the
-  // same delta. contrastFactor is itself already the RATIO to apply now
-  // (see currentAdjustDelta) — contrast composes multiplicatively around the
-  // shared 128 midpoint, unlike brightness/tone which compose by addition.
+  // Pure pixel transform, shared by the live preview (reads adjBaseSnapshot,
+  // writes to the visible ctx only) and the real commit (reads
+  // adjBaseSnapshot, writes origCanvas) — so the two can never compute a
+  // different result from the same slider values.
   function applyAdjustment(srcData, dstData, brightness, contrastFactor, rTone, gTone, bTone) {
     const tone = [rTone, gTone, bTone];
     for (let i = 0; i < srcData.length; i += 4) {
@@ -3855,36 +3861,28 @@ function buildGIF(w, h, frames, delayCs) {
     }
   }
 
-  // What still needs to be applied to origCanvas to bring it from
-  // "adjCommitted's baked-in amount" up to "what the sliders currently
-  // read" — this is what actually gets applied each time, both for the live
-  // preview and the real commit.
-  function currentAdjustDelta() {
+  function currentAdjustValues() {
     return {
-      brightness: (+adjBrightS.value || 0) - adjCommitted.brightness,
-      contrastFactor: adjFactorForContrast(+adjContrastS.value || 0) / adjCommitted.contrastFactor,
-      r: (+adjRS.value || 0) - adjCommitted.r,
-      g: (+adjGS.value || 0) - adjCommitted.g,
-      b: (+adjBS.value || 0) - adjCommitted.b,
+      brightness: +adjBrightS.value || 0,
+      contrastFactor: adjFactorForContrast(+adjContrastS.value || 0),
+      r: +adjRS.value || 0, g: +adjGS.value || 0, b: +adjBS.value || 0,
     };
   }
 
-  function adjDeltaIsNeutral(d) {
-    return d.brightness === 0 && d.r === 0 && d.g === 0 && d.b === 0 && Math.abs(d.contrastFactor - 1) < 1e-9;
-  }
+  function adjIsNeutral(v) { return v.brightness === 0 && v.r === 0 && v.g === 0 && v.b === 0 && Math.abs(v.contrastFactor - 1) < 1e-9; }
 
-  // Live feedback while a slider is being dragged: paints the adjusted
-  // result straight onto the visible canvas without touching origCanvas —
+  // Live feedback while a slider is being dragged: paints the transform
+  // straight onto the visible canvas without touching origCanvas at all —
   // exactly the same "preview without committing" split endPaint() uses for
-  // brush strokes via previewStroke(), just reading the whole image instead
-  // of one stroke's layer.
+  // brush strokes via previewStroke(), just reading the whole
+  // pre-session snapshot instead of one stroke's layer.
   function previewAdjustment() {
-    if (!paintMode || !origCanvas) return;
-    const d = currentAdjustDelta();
-    if (adjDeltaIsNeutral(d)) { drawOriginal(); return; }
-    const src = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH);
+    if (!colorAdjustMode || !adjBaseSnapshot) return;
+    const v = currentAdjustValues();
+    if (adjIsNeutral(v)) { drawOriginal(); return; }
+    const src = adjBaseSnapshot.getContext('2d').getImageData(0, 0, imgW, imgH);
     const out = ctx.createImageData(imgW, imgH);
-    applyAdjustment(src.data, out.data, d.brightness, d.contrastFactor, d.r, d.g, d.b);
+    applyAdjustment(src.data, out.data, v.brightness, v.contrastFactor, v.r, v.g, v.b);
     ctx.putImageData(out, 0, 0);
   }
 
@@ -3901,81 +3899,97 @@ function buildGIF(w, h, frames, delayCs) {
     return m;
   }
 
-  // Bakes a given delta into origCanvas for real (mirroring the
-  // endPaint()/doFill() commit pattern: snapshot for undo, mutate
-  // origCanvas, accumulate into paintAccum so orientation changes keep
-  // carrying the adjustment, recompute hslBuf, refresh detail-mode buffers).
-  // Shared by the normal slider-release commit and the リセット button
-  // (which commits the delta back down to neutral).
-  function adjApplyDeltaToCanvas(d) {
-    snapshotForUndo();
-    const oc2 = origCanvas.getContext('2d');
-    const src = oc2.getImageData(0, 0, imgW, imgH);
-    const out = oc2.createImageData(imgW, imgH);
-    applyAdjustment(src.data, out.data, d.brightness, d.contrastFactor, d.r, d.g, d.b);
-    oc2.putImageData(out, 0, 0);
-    accumulatePaintFromMask(fullCanvasMask());
-    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
-    if (detailChk.checked) decompose(); // see the comment in endPaint() above
-    drawOriginal();
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    computeImageStats();
-    updateMLResistance();
-  }
-
-  function adjCommit() {
-    if (!paintMode || !hslBuf) return;
-    const d = currentAdjustDelta();
-    if (adjDeltaIsNeutral(d)) return;
-    adjApplyDeltaToCanvas(d);
-    adjCommitted = {
-      brightness: +adjBrightS.value || 0,
-      contrastFactor: adjFactorForContrast(+adjContrastS.value || 0),
-      r: +adjRS.value || 0, g: +adjGS.value || 0, b: +adjBS.value || 0,
-    };
-  }
-
   function fmtSigned(v) { return (v > 0 ? '+' : '') + v; }
 
-  // Sets the slider DOM values/labels to reflect a given committed state,
-  // WITHOUT touching origCanvas or adjCommitted — used to sync the UI back
-  // to neutral wherever adjCommitted itself gets reset to neutral (see the
-  // big comment above adjCommitted for why loadFile/paintClearBtn/
-  // paintUndoBtn all do this pair together, never one without the other).
-  function adjSyncSlidersTo(v) {
-    adjBrightS.value = v.brightness; adjBrightV.textContent = fmtSigned(v.brightness);
-    adjContrastS.value = v.contrast; adjContrastV.textContent = fmtSigned(v.contrast);
-    adjRS.value = v.r; adjRV.textContent = fmtSigned(v.r);
-    adjGS.value = v.g; adjGV.textContent = fmtSigned(v.g);
-    adjBS.value = v.b; adjBV.textContent = fmtSigned(v.b);
+  function adjResetSlidersToZero() {
+    adjBrightS.value = 0; adjBrightV.textContent = '0';
+    adjContrastS.value = 0; adjContrastV.textContent = '0';
+    adjRS.value = 0; adjRV.textContent = '0';
+    adjGS.value = 0; adjGV.textContent = '0';
+    adjBS.value = 0; adjBV.textContent = '0';
   }
 
   [[adjBrightS, adjBrightV], [adjContrastS, adjContrastV], [adjRS, adjRV], [adjGS, adjGV], [adjBS, adjBV]].forEach(([slider, label]) => {
     slider.addEventListener('input', () => { label.textContent = fmtSigned(+slider.value); previewAdjustment(); });
-    slider.addEventListener('change', adjCommit);
   });
 
-  // Cancels any in-progress (uncommitted) drag by snapping the sliders back
-  // to adjCommitted, AND — if there's a real baked-in adjustment already
-  // sitting in origCanvas — commits the inverse delta to strip it back out
-  // to neutral (its own undo-able step, via the same pipeline as any other
-  // commit).
-  adjResetBtn.addEventListener('click', () => {
-    const neutral = { brightness: 0, contrastFactor: 1, r: 0, g: 0, b: 0 };
-    if (paintMode && hslBuf && !adjDeltaIsNeutralBetween(adjCommitted, neutral)) {
-      adjApplyDeltaToCanvas({
-        brightness: neutral.brightness - adjCommitted.brightness,
-        contrastFactor: neutral.contrastFactor / adjCommitted.contrastFactor,
-        r: neutral.r - adjCommitted.r, g: neutral.g - adjCommitted.g, b: neutral.b - adjCommitted.b,
-      });
-      adjCommitted = neutral;
-    }
-    adjSyncSlidersTo({ brightness: 0, contrast: 0, r: 0, g: 0, b: 0 });
-    if (paintMode) drawOriginal(); // discards any uncommitted live preview even when nothing was actually baked in
-  });
-  function adjDeltaIsNeutralBetween(a, b) {
-    return a.brightness === b.brightness && a.r === b.r && a.g === b.g && a.b === b.b && Math.abs(a.contrastFactor - b.contrastFactor) < 1e-9;
+  // Everything else in the paint toolbar (brush/fill/text/eyedrop/undo/
+  // clear/save, plus the orientation buttons) is disabled for the duration
+  // of a session — painting or rotating mid-session would mutate origCanvas
+  // out from under adjBaseSnapshot, silently discarding either the
+  // in-progress preview or (worse) the paint/rotation itself once Confirm
+  // recomputes from the now-stale snapshot. paintUndoBtn/resetOrientBtn are
+  // restored to their OWN proper enabled state on exit, not force-enabled —
+  // each already tracks whether it has anything to undo/reset independent
+  // of this session.
+  function setAdjustToolsDisabled(disabled) {
+    [paintColorS, paintSizeS, paintAlphaS, paintBlendS, paintEraserBtn, paintEyedropBtn, paintFillBtn,
+     paintTextS, paintTextModeBtn, paintClearBtn, paintSaveBtn].forEach(el => { el.disabled = disabled; });
+    ['rotateLeftBtn', 'rotateRightBtn', 'flipHBtn', 'flipVBtn'].forEach(id => { document.getElementById(id).disabled = disabled; });
+    paintUndoBtn.disabled = disabled || undoStack.length === 0;
+    document.getElementById('resetOrientBtn').disabled = disabled || (orientRotation === 0 && !orientFlipH && !orientFlipV);
   }
+
+  function adjStartSession() {
+    if (!paintMode || !origCanvas || colorAdjustMode) return;
+    colorAdjustMode = true;
+    adjBaseSnapshot = document.createElement('canvas');
+    adjBaseSnapshot.width = imgW; adjBaseSnapshot.height = imgH;
+    adjBaseSnapshot.getContext('2d').drawImage(origCanvas, 0, 0);
+    adjResetSlidersToZero();
+    adjModeBtn.textContent = _adjOn;
+    adjModeBtn.style.color = 'var(--accent)';
+    adjSliders.style.display = 'flex';
+    setAdjustToolsDisabled(true);
+  }
+
+  // Shared tail for both ending paths (Confirm and Cancel) — closes the
+  // session's UI state. Does NOT touch origCanvas; callers that need to
+  // bake the adjustment in do that first, before calling this.
+  function adjCloseSessionUI() {
+    colorAdjustMode = false;
+    adjBaseSnapshot = null;
+    adjModeBtn.textContent = _adjOff;
+    adjModeBtn.style.color = '';
+    adjSliders.style.display = 'none';
+    setAdjustToolsDisabled(false);
+  }
+
+  // Discards the session without touching origCanvas — used both by
+  // re-clicking adjModeBtn while active and by anything that needs to force
+  // the session closed out from under the user (new upload, leaving paint
+  // mode). A no-op if no session is running.
+  function adjCancelSession() {
+    if (!colorAdjustMode) return;
+    adjCloseSessionUI();
+    if (paintMode) drawOriginal(); // discards whatever the live preview was showing
+  }
+
+  adjModeBtn.addEventListener('click', () => {
+    if (colorAdjustMode) adjCancelSession();
+    else adjStartSession();
+  });
+
+  adjConfirmBtn.addEventListener('click', () => {
+    if (!colorAdjustMode || !adjBaseSnapshot || !hslBuf) return;
+    const v = currentAdjustValues();
+    if (!adjIsNeutral(v)) {
+      snapshotForUndo();
+      const oc2 = origCanvas.getContext('2d');
+      const src = adjBaseSnapshot.getContext('2d').getImageData(0, 0, imgW, imgH);
+      const out = oc2.createImageData(imgW, imgH);
+      applyAdjustment(src.data, out.data, v.brightness, v.contrastFactor, v.r, v.g, v.b);
+      oc2.putImageData(out, 0, 0);
+      accumulatePaintFromMask(fullCanvasMask());
+      hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+      if (detailChk.checked) decompose(); // see the comment in endPaint() above
+      origImageData = oc2.getImageData(0, 0, imgW, imgH);
+      computeImageStats();
+      updateMLResistance();
+    }
+    adjCloseSessionUI();
+    drawOriginal();
+  });
 
   function paintStrokeColor() { return paintEraser ? '#ffffff' : paintColorS.value; }
   function paintAlpha() { return (+paintAlphaS.value || 100) / 100; }
@@ -4293,12 +4307,6 @@ function buildGIF(w, h, frames, delayCs) {
     drawOriginal();
     computeImageStats();
     updateMLResistance();
-    // Undo can restore a canvas from before/after/mid any past adjustment
-    // commit, and doesn't record what adjCommitted was at that point — so
-    // rather than guess, treat the restored canvas as a fresh baseline the
-    // sliders know nothing about yet (see the comment above adjCommitted).
-    adjCommitted = { brightness: 0, contrastFactor: 1, r: 0, g: 0, b: 0 };
-    adjSyncSlidersTo({ brightness: 0, contrast: 0, r: 0, g: 0, b: 0 });
     paintUndoBtn.disabled = undoStack.length === 0; // stays enabled while more undo steps remain
   });
 
@@ -4315,10 +4323,6 @@ function buildGIF(w, h, frames, delayCs) {
     drawOriginal();
     computeImageStats();
     updateMLResistance();
-    // pristineCanvas has zero adjustment baked in by definition, so this is
-    // always a real reset to neutral — see the comment above adjCommitted.
-    adjCommitted = { brightness: 0, contrastFactor: 1, r: 0, g: 0, b: 0 };
-    adjSyncSlidersTo({ brightness: 0, contrast: 0, r: 0, g: 0, b: 0 });
   });
 
   // Saves the drawing itself (origCanvas — pre-noise, whatever's actually
@@ -4351,6 +4355,7 @@ function buildGIF(w, h, frames, delayCs) {
       paintControls.style.display = 'flex';
       if (hslBuf) drawOriginal();
     } else {
+      adjCancelSession(); // leaving paint mode mid-session would strand adjBaseSnapshot pointing at a canvas nothing can see anymore
       paintModeBtn.textContent = _pmOff;
       paintModeBtn.style.color = '';
       overlay.style.pointerEvents = 'none';
