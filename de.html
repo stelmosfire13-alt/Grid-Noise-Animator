@@ -551,6 +551,37 @@
           <input type="text" id="paintTextS" placeholder="Text eingeben" maxlength="40" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
           <button type="button" class="btn btn-gray" id="paintTextModeBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔤 Text platzieren</button>
         </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:8px;">
+          <button type="button" class="btn btn-gray" id="adjModeBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🎨 Farbanpassung</button>
+          <div id="adjSliders" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);">Helligkeit</label>
+              <input type="range" id="adjBrightS" min="-100" max="100" value="0" style="width:70px;">
+              <em id="adjBrightV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);">Kontrast</label>
+              <input type="range" id="adjContrastS" min="-100" max="100" value="0" style="width:70px;">
+              <em id="adjContrastV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);">Farbton R</label>
+              <input type="range" id="adjRS" min="-100" max="100" value="0" style="width:60px;">
+              <em id="adjRV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);">G</label>
+              <input type="range" id="adjGS" min="-100" max="100" value="0" style="width:60px;">
+              <em id="adjGV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);">B</label>
+              <input type="range" id="adjBS" min="-100" max="100" value="0" style="width:60px;">
+              <em id="adjBV" style="font-style:normal;font-size:12px;min-width:2.2em;display:inline-block;">0</em>
+            </div>
+            <button type="button" class="btn btn-blue" id="adjConfirmBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">✓ Bestätigen</button>
+          </div>
+        </div>
       </div>
       <div id="mlStats" style="display:none;padding-top:5px;font-size:0.73rem;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
@@ -1415,6 +1446,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (paintMode) paintModeBtn.click();
     orientRotation = 0; orientFlipH = false; orientFlipV = false;
     orientHistory = []; paintAccum = null;
+    adjCancelSession();
     if (file.type.startsWith('video/')) loadVideoFile(file);
     else loadImageFile(file);
   }
@@ -2299,7 +2331,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   overlay.addEventListener('mousedown', e => {
     const pos = overlayToImage(e);
-    if (paintMode) { routePaintClick(pos); } else startDraw(pos);
+    if (paintMode) { if (!colorAdjustMode) routePaintClick(pos); } else startDraw(pos);
   });
   overlay.addEventListener('mousemove', e => {
     const pos = overlayToImage(e);
@@ -2325,7 +2357,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (!drawMode && !paintMode) return;
     e.preventDefault();
     const pos = touchPos(e);
-    if (paintMode) { routePaintClick(pos); } else startDraw(pos);
+    if (paintMode) { if (!colorAdjustMode) routePaintClick(pos); } else startDraw(pos);
   }, { passive: false });
   overlay.addEventListener('touchmove', e => {
     if (!isDrawing && !isPainting) return;
@@ -2762,6 +2794,18 @@ function buildGIF(w, h, frames, delayCs) {
   const paintSaveBtn     = document.getElementById('paintSaveBtn');
   const paintTextS       = document.getElementById('paintTextS');
   const paintTextModeBtn = document.getElementById('paintTextModeBtn');
+  const adjBrightS   = document.getElementById('adjBrightS');
+  const adjBrightV   = document.getElementById('adjBrightV');
+  const adjContrastS = document.getElementById('adjContrastS');
+  const adjContrastV = document.getElementById('adjContrastV');
+  const adjRS = document.getElementById('adjRS'), adjRV = document.getElementById('adjRV');
+  const adjGS = document.getElementById('adjGS'), adjGV = document.getElementById('adjGV');
+  const adjBS = document.getElementById('adjBS'), adjBV = document.getElementById('adjBV');
+  const adjModeBtn    = document.getElementById('adjModeBtn');
+  const adjSliders    = document.getElementById('adjSliders');
+  const adjConfirmBtn = document.getElementById('adjConfirmBtn');
+  const _adjOff = '🎨 Farbanpassung';
+  const _adjOn  = '🎨 Farbe wird angepasst…';
   const _pmOff = '🖌 Zeichnen';
   const _pmOn  = '🖌 Zeichnen…';
   let paintMode = false, isPainting = false, paintLast = null, paintEraser = false;
@@ -2795,6 +2839,133 @@ function buildGIF(w, h, frames, delayCs) {
     tctx.drawImage(maskCanvas, 0, 0);
     paintAccum.getContext('2d').drawImage(tmp, 0, 0);
   }
+
+  function adjFactorForContrast(v) {
+    const c = v * 2.55;
+    return (259 * (c + 255)) / (255 * (259 - c));
+  }
+
+  function applyAdjustment(srcData, dstData, brightness, contrastFactor, rTone, gTone, bTone) {
+    const tone = [rTone, gTone, bTone];
+    for (let i = 0; i < srcData.length; i += 4) {
+      for (let ch = 0; ch < 3; ch++) {
+        let v = srcData[i + ch];
+        v = contrastFactor * (v - 128) + 128;
+        v += brightness;
+        v += tone[ch];
+        dstData[i + ch] = v < 0 ? 0 : v > 255 ? 255 : v;
+      }
+      dstData[i + 3] = srcData[i + 3];
+    }
+  }
+
+  function currentAdjustValues() {
+    return {
+      brightness: +adjBrightS.value || 0,
+      contrastFactor: adjFactorForContrast(+adjContrastS.value || 0),
+      r: +adjRS.value || 0, g: +adjGS.value || 0, b: +adjBS.value || 0,
+    };
+  }
+
+  function adjIsNeutral(v) { return v.brightness === 0 && v.r === 0 && v.g === 0 && v.b === 0 && Math.abs(v.contrastFactor - 1) < 1e-9; }
+
+  let adjBaseSnapshot = null;
+  let colorAdjustMode = false;
+
+  function previewAdjustment() {
+    if (!colorAdjustMode || !adjBaseSnapshot) return;
+    const v = currentAdjustValues();
+    if (adjIsNeutral(v)) { drawOriginal(); return; }
+    const src = adjBaseSnapshot.getContext('2d').getImageData(0, 0, imgW, imgH);
+    const out = ctx.createImageData(imgW, imgH);
+    applyAdjustment(src.data, out.data, v.brightness, v.contrastFactor, v.r, v.g, v.b);
+    ctx.putImageData(out, 0, 0);
+  }
+
+  function fullCanvasMask() {
+    const m = document.createElement('canvas');
+    m.width = imgW; m.height = imgH;
+    const mctx = m.getContext('2d');
+    mctx.fillStyle = '#000';
+    mctx.fillRect(0, 0, imgW, imgH);
+    return m;
+  }
+
+  function fmtSigned(v) { return (v > 0 ? '+' : '') + v; }
+
+  function adjResetSlidersToZero() {
+    adjBrightS.value = 0; adjBrightV.textContent = '0';
+    adjContrastS.value = 0; adjContrastV.textContent = '0';
+    adjRS.value = 0; adjRV.textContent = '0';
+    adjGS.value = 0; adjGV.textContent = '0';
+    adjBS.value = 0; adjBV.textContent = '0';
+  }
+
+  [[adjBrightS, adjBrightV], [adjContrastS, adjContrastV], [adjRS, adjRV], [adjGS, adjGV], [adjBS, adjBV]].forEach(([slider, label]) => {
+    slider.addEventListener('input', () => { label.textContent = fmtSigned(+slider.value); previewAdjustment(); });
+  });
+
+  function setAdjustToolsDisabled(disabled) {
+    [paintColorS, paintSizeS, paintAlphaS, paintBlendS, paintEraserBtn, paintEyedropBtn, paintFillBtn,
+     paintTextS, paintTextModeBtn, paintClearBtn, paintSaveBtn].forEach(el => { el.disabled = disabled; });
+    ['rotateLeftBtn', 'rotateRightBtn', 'flipHBtn', 'flipVBtn'].forEach(id => { document.getElementById(id).disabled = disabled; });
+    paintUndoBtn.disabled = disabled || undoStack.length === 0;
+    document.getElementById('resetOrientBtn').disabled = disabled || (orientRotation === 0 && !orientFlipH && !orientFlipV);
+  }
+
+  function adjStartSession() {
+    if (!paintMode || !origCanvas || colorAdjustMode) return;
+    colorAdjustMode = true;
+    adjBaseSnapshot = document.createElement('canvas');
+    adjBaseSnapshot.width = imgW; adjBaseSnapshot.height = imgH;
+    adjBaseSnapshot.getContext('2d').drawImage(origCanvas, 0, 0);
+    adjResetSlidersToZero();
+    adjModeBtn.textContent = _adjOn;
+    adjModeBtn.style.color = 'var(--accent)';
+    adjSliders.style.display = 'flex';
+    setAdjustToolsDisabled(true);
+  }
+
+  function adjCloseSessionUI() {
+    colorAdjustMode = false;
+    adjBaseSnapshot = null;
+    adjModeBtn.textContent = _adjOff;
+    adjModeBtn.style.color = '';
+    adjSliders.style.display = 'none';
+    setAdjustToolsDisabled(false);
+  }
+
+  function adjCancelSession() {
+    if (!colorAdjustMode) return;
+    adjCloseSessionUI();
+    if (paintMode) drawOriginal();
+  }
+
+  adjModeBtn.addEventListener('click', () => {
+    if (colorAdjustMode) adjCancelSession();
+    else adjStartSession();
+  });
+
+  adjConfirmBtn.addEventListener('click', () => {
+    if (!colorAdjustMode || !adjBaseSnapshot || !hslBuf) return;
+    const v = currentAdjustValues();
+    if (!adjIsNeutral(v)) {
+      snapshotForUndo();
+      const oc2 = origCanvas.getContext('2d');
+      const src = adjBaseSnapshot.getContext('2d').getImageData(0, 0, imgW, imgH);
+      const out = oc2.createImageData(imgW, imgH);
+      applyAdjustment(src.data, out.data, v.brightness, v.contrastFactor, v.r, v.g, v.b);
+      oc2.putImageData(out, 0, 0);
+      accumulatePaintFromMask(fullCanvasMask());
+      hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+      if (detailChk.checked) decompose();
+      origImageData = oc2.getImageData(0, 0, imgW, imgH);
+      computeImageStats();
+      updateMLResistance();
+    }
+    adjCloseSessionUI();
+    drawOriginal();
+  });
 
   function paintStrokeColor() { return paintEraser ? '#ffffff' : paintColorS.value; }
   function paintAlpha() { return (+paintAlphaS.value || 100) / 100; }
@@ -3097,6 +3268,7 @@ function buildGIF(w, h, frames, delayCs) {
       paintControls.style.display = 'flex';
       if (hslBuf) drawOriginal();
     } else {
+      adjCancelSession();
       paintModeBtn.textContent = _pmOff;
       paintModeBtn.style.color = '';
       overlay.style.pointerEvents = 'none';
