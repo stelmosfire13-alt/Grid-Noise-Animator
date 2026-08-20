@@ -380,6 +380,33 @@
         </div>
         <input type="range" id="warpS" min="1" max="20" value="2">
       </div>
+      <div class="field" style="margin-top:4px">
+        <div class="field-label">
+          <span>موجة قوس قزح (تجريبي) <em id="iridV">30%</em></span>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;color:var(--muted)">
+            <input type="checkbox" id="iridChk" style="width:13px;height:13px">ON
+          </label>
+        </div>
+        <input type="range" id="iridS" min="0" max="100" value="30">
+      </div>
+      <div class="field">
+        <div class="field-label">
+          <span>تلألؤ (تجريبي) <em id="sparkleV">30%</em></span>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;color:var(--muted)">
+            <input type="checkbox" id="sparkleChk" style="width:13px;height:13px">ON
+          </label>
+        </div>
+        <input type="range" id="sparkleS" min="0" max="100" value="30">
+      </div>
+      <div class="field">
+        <div class="field-label">
+          <span>قوس قزح الخلايا (تجريبي) <em id="cellRainbowV">30%</em></span>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;color:var(--muted)">
+            <input type="checkbox" id="cellRainbowChk" style="width:13px;height:13px">ON
+          </label>
+        </div>
+        <input type="range" id="cellRainbowS" min="0" max="100" value="30">
+      </div>
       <div class="field" style="margin-top:10px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="checkbox" id="mlGuard" checked style="width:14px;height:14px">
@@ -827,6 +854,12 @@ function buildGIF(w, h, frames, delayCs) {
   const blurS    = document.getElementById('blurS');
   const warpChk    = document.getElementById('warpChk');
   const warpS      = document.getElementById('warpS');
+  const iridChk    = document.getElementById('iridChk');
+  const iridS      = document.getElementById('iridS');
+  const sparkleChk = document.getElementById('sparkleChk');
+  const sparkleS   = document.getElementById('sparkleS');
+  const cellRainbowChk = document.getElementById('cellRainbowChk');
+  const cellRainbowS   = document.getElementById('cellRainbowS');
   const voronoiChk = document.getElementById('voronoiChk');
   const morphS        = document.getElementById('morphS');
   const detailChk     = document.getElementById('detailChk');
@@ -872,8 +905,14 @@ function buildGIF(w, h, frames, delayCs) {
 
   blurS.addEventListener('input', () => { document.getElementById('blurV').textContent = blurS.value + 'px'; redrawIfStopped(); });
   warpS.addEventListener('input', () => { document.getElementById('warpV').textContent = warpS.value + 'px'; redrawIfStopped(); });
+  iridS.addEventListener('input', () => { document.getElementById('iridV').textContent = iridS.value + '%'; redrawIfStopped(); });
+  sparkleS.addEventListener('input', () => { document.getElementById('sparkleV').textContent = sparkleS.value + '%'; redrawIfStopped(); });
+  cellRainbowS.addEventListener('input', () => { document.getElementById('cellRainbowV').textContent = cellRainbowS.value + '%'; redrawIfStopped(); });
   document.getElementById('blurChk').addEventListener('change', redrawIfStopped);
   document.getElementById('warpChk').addEventListener('change', redrawIfStopped);
+  iridChk.addEventListener('change', redrawIfStopped);
+  sparkleChk.addEventListener('change', redrawIfStopped);
+  cellRainbowChk.addEventListener('change', redrawIfStopped);
   document.getElementById('noiseSel').addEventListener('change', redrawIfStopped);
   mlGuard.addEventListener('change', redrawIfStopped);
   msgText.addEventListener('input', () => {
@@ -2029,13 +2068,63 @@ function buildGIF(w, h, frames, delayCs) {
     }
   }
 
-  function drawNoise() {
+  // Fixed shape constants for the iridescent wave / sparkle (test feature,
+  // see drawNoise() below) — deliberately not exposed as sliders, to keep
+  // the ON/OFF+strength UI minimal like every other fx-card control.
+  const IRID_ANGLE  = 0.7853981634;                 // 45°: diagonal bands, like foil tilted under light
+  const IRID_SPEED  = 0.15;                          // cycles/sec — slow drift, not a strobe
+  const SPARKLE_PROB_MAX = 0.18;                     // at slider=100%, ~18% of cells flash per rendered frame
+  // Two facet "kinds" per flash, each with its own lightness + opacity
+  // range, so a field of sparkles reads as many small reflective flecks
+  // catching light at different angles (some bright, some in shadow) rather
+  // than one uniform pastel color repeated everywhere.
+  const SPARKLE_BRIGHT_L = 0.5;                      // vivid facet lightness
+  const SPARKLE_BRIGHT_MIX = [0.65, 0.95];           // [min,max] opacity range for bright facets
+  const SPARKLE_DARK_L   = [0.10, 0.28];             // [min,max] lightness range for dark jewel-tone facets
+  const SPARKLE_DARK_MIX = [0.35, 0.80];             // [min,max] opacity range for dark facets — the "half-transparent dark fleck" look
+  const SPARKLE_BG_DARKEN_MAX = 32;                  // at slider=100%, background lightness (0-100 scale) is pulled down by this much, for mood/contrast against the flecks
+  const CELL_RAINBOW_L       = 0.42;                 // fixed lightness for the whole-grid rainbow overlay — slightly below the 0.5 max-chroma point, for a dimmer/moodier rainbow
+  const CELL_RAINBOW_MIX_MAX = 0.62;                 // at slider=100%, every cell's rainbow gradient is blended in at up to 62% opacity
+
+  // Fully-saturated RGB for a given hue in degrees and lightness (0..1) —
+  // used for the sparkle flash color. Deliberately NOT reusing the app's
+  // usual per-pixel HSL→RGB conversion (the k/t/u piecewise-linear one
+  // further down): that one needs an actual per-pixel lightness value,
+  // whereas a sparkle always wants the SAME fixed-lightness color
+  // regardless of what the pixel underneath was, so a pinned-L closed form
+  // is both simpler and exactly what's wanted here. L=0.5 gives the vivid
+  // "bright facet" colors; a low L gives dark jewel-tone "dark facet" ones.
+  function hueToRgb(hDeg, L) {
+    const hh = ((hDeg % 360) + 360) % 360 / 60;
+    const c = 1 - Math.abs(2 * L - 1);
+    const x = c * (1 - Math.abs(hh % 2 - 1));
+    const m = L - c / 2;
+    let r1, g1, b1;
+    if      (hh < 1) { r1 = c; g1 = x; b1 = 0; }
+    else if (hh < 2) { r1 = x; g1 = c; b1 = 0; }
+    else if (hh < 3) { r1 = 0; g1 = c; b1 = x; }
+    else if (hh < 4) { r1 = 0; g1 = x; b1 = c; }
+    else if (hh < 5) { r1 = x; g1 = 0; b1 = c; }
+    else             { r1 = c; g1 = 0; b1 = x; }
+    return [(r1 + m) * 255, (g1 + m) * 255, (b1 + m) * 255];
+  }
+
+  // tSec drives the iridescent wave's phase. Defaults to the current
+  // wall-clock time (performance.now()) so every ad-hoc redrawIfStopped()
+  // call site (there are many — settings changes, orientation, etc.) gets a
+  // plausible "wherever the wave currently is" without each of them needing
+  // to know or care about time. The few call sites that actually animate a
+  // sequence of frames (the live loop, and the GIF/MP4/WebM export loops)
+  // pass their own correctly-paced tSec explicitly instead, the same way
+  // they already do for applyScreensaver(tSec).
+  function drawNoise(tSec) {
     if (!hslBuf) return;
     if (detailChk.checked && lowHslBuf) {
       if (voronoiChk.checked && cellMap) { drawNoiseDetailVoronoi(); drawWatermark(); return; }
       drawNoiseDetail(); drawWatermark(); return;
     }
     if (voronoiChk.checked) { drawNoiseVoronoi(); drawWatermark(); return; }
+    if (tSec === undefined) tSec = performance.now() / 1000;
     const dH  = +hueS.value;
     const dL  = +litS.value;
     const dS  = +satS.value;
@@ -2048,6 +2137,26 @@ function buildGIF(w, h, frames, delayCs) {
     const warpR   = warpOn ? +warpS.value : 0;
     const isBlue  = document.getElementById('noiseSel').value === 'blue';
     const frameTheta = Math.random() * 6.2831853;
+    const iridOn    = iridChk.checked;
+    const iridAmp   = iridOn ? (+iridS.value / 100) * 90 : 0;
+    const iridCosA  = Math.cos(IRID_ANGLE), iridSinA = Math.sin(IRID_ANGLE);
+    const iridPeriod = Math.max(w, h) / 2.5; // a few bands visible across the image at once
+    const iridBase  = tSec * IRID_SPEED * 6.2831853;
+    const sparkleOn   = sparkleChk.checked;
+    const sparkleProb = sparkleOn ? (+sparkleS.value / 100) * SPARKLE_PROB_MAX : 0;
+    // A slight background darkening, scaled with the same slider, so the
+    // flecks read against a moodier backdrop instead of the flat original
+    // lightness — same idea as glitter fabric usually sitting on a darker
+    // base rather than white.
+    const sparkleBgDarken = sparkleOn ? (+sparkleS.value / 100) * SPARKLE_BG_DARKEN_MAX : 0;
+    // ── Cell rainbow (test): unlike sparkle, this is NOT a randomly chosen
+    // subset of cells flashing — EVERY cell gets the same per-cell rainbow
+    // gradient (same hue-vs-position formula as sparkle's intra-cell
+    // gradient), blended in semi-transparently across the whole grid. Reads
+    // as a holographic sheet laid over the whole image rather than
+    // scattered glints.
+    const cellRainbowOn  = cellRainbowChk.checked;
+    const cellRainbowMix = cellRainbowOn ? (+cellRainbowS.value / 100) * CELL_RAINBOW_MIX_MAX : 0;
 
     for (let ci = 0; ci < ROWS * COLS; ci++) {
       const { x: cx, y: cy, cw, ch } = cellBnds[ci];
@@ -2083,6 +2192,59 @@ function buildGIF(w, h, frames, delayCs) {
       const dG =  chromaAmp * (-0.5 * cosT - 0.8660254 * sinT);
       const dB =  chromaAmp * (-0.5 * cosT + 0.8660254 * sinT);
 
+      // ── Sparkle (test): a random subset of cells briefly flash a color
+      // drawn from the same moving diagonal rainbow axis as the iridescent
+      // wave (position + time), re-rolled independently every frame — the
+      // same "one random draw per cell per frame" shape as the theta/ds/dl
+      // noise above, but for hue specifically it's ordered, not random: a
+      // purely random per-flash hue read as scattered confetti rather than
+      // a hologram. Reusing IRID_ANGLE/iridPeriod/IRID_SPEED (rather than
+      // separate sparkle-only constants) keeps the sparkle colors aligned
+      // with the wave's own rainbow band when both effects are on together.
+      // Blended in (toward a fixed target, at a per-flash opacity) rather
+      // than added, in the per-pixel loop below — an additive delta would
+      // have no headroom left to raise brightness on a pixel that's already
+      // near-white, making flashes on bright image regions invisible;
+      // blending toward a fixed color stays visible regardless of what was
+      // underneath. Unlike the zero-mean noise above, this is NOT zero-mean
+      // (a flash always pulls toward one fixed color, never symmetrically
+      // away from it) — deliberately: it's a decorative toggle, not part of
+      // the frame-averaging ML-protection design, so it doesn't need that
+      // property.
+      //
+      // Each flash is independently either a "bright" facet (vivid,
+      // L=0.5-ish, high opacity — light glinting straight back) or a "dark"
+      // facet (low-L jewel tone, a broad opacity range — light catching the
+      // flake edge-on). Randomizing both which kind AND its exact
+      // lightness/opacity per flash (rather than one fixed look for every
+      // sparkle) is what reads as many small facets glinting at different
+      // angles instead of one repeated pastel dot.
+      let sparkleActive = false, spR = 0, spG = 0, spB = 0, spMix = 0;
+      if (sparkleOn && Math.random() < sparkleProb) {
+        sparkleActive = true;
+        const spatialCycles = ((cx + cw / 2) * iridCosA + (cy + ch / 2) * iridSinA) / iridPeriod;
+        const hue = (((spatialCycles + tSec * IRID_SPEED) % 1) + 1) % 1 * 360;
+        if (Math.random() < 0.5) {
+          spMix = SPARKLE_BRIGHT_MIX[0] + Math.random() * (SPARKLE_BRIGHT_MIX[1] - SPARKLE_BRIGHT_MIX[0]);
+          [spR, spG, spB] = hueToRgb(hue, SPARKLE_BRIGHT_L);
+        } else {
+          spMix = SPARKLE_DARK_MIX[0] + Math.random() * (SPARKLE_DARK_MIX[1] - SPARKLE_DARK_MIX[0]);
+          const darkL = SPARKLE_DARK_L[0] + Math.random() * (SPARKLE_DARK_L[1] - SPARKLE_DARK_L[0]);
+          [spR, spG, spB] = hueToRgb(hue, darkL);
+        }
+      }
+
+      // Cell rainbow (test): a hue-vs-position-within-cell gradient,
+      // computed for every cell unconditionally (no random per-cell roll,
+      // unlike sparkle above) and blended at a fixed, uniform low opacity
+      // in the per-pixel loop below.
+      let cellRbHueBase = 0, cellRbSpanInv = 0;
+      if (cellRainbowOn) {
+        const rbSpatialCycles = ((cx + cw / 2) * iridCosA + (cy + ch / 2) * iridSinA) / iridPeriod;
+        cellRbHueBase = (((rbSpatialCycles + tSec * IRID_SPEED) % 1) + 1) % 1 * 360;
+        cellRbSpanInv = 1 / Math.max(cw, ch, 1);
+      }
+
       for (let py = cy; py < cy + ch; py++) {
         const rowBase = py * w;
         for (let px = cx; px < cx + cw; px++) {
@@ -2102,6 +2264,7 @@ function buildGIF(w, h, frames, delayCs) {
           if (sv < 0) sv = 0; else if (sv > 100) sv = 100;
 
           let lv = buf[i3 + 2] + dl;
+          if (sparkleBgDarken) lv -= sparkleBgDarken;
           if (lv < 0) lv = 0; else if (lv > 100) lv = 100;
 
           const hv  = buf[i3];
@@ -2125,6 +2288,42 @@ function buildGIF(w, h, frames, delayCs) {
           r += dR; if (r < 0) r = 0; else if (r > 255) r = 255;
           g += dG; if (g < 0) g = 0; else if (g > 255) g = 255;
           b += dB; if (b < 0) b = 0; else if (b > 255) b = 255;
+
+          // Iridescent wave (test): a diagonal rainbow band drifting across
+          // the image over time. Reuses the same zero-mean RGB
+          // chroma-rotation trick as the hue-noise slider above (δR+δG+δB=0
+          // at every pixel, see the HSL→RGB chroma-rotation note elsewhere
+          // in this file) — the phase here is a function of (position,
+          // time) instead of per-cell randomness, which is what turns it
+          // into a smoothly moving band instead of static per-cell static.
+          // Being zero-mean keeps it from disturbing the app's frame-
+          // averaging identity over a full wave cycle, unlike sparkle.
+          if (iridOn) {
+            const wavePhase = (px * iridCosA + py * iridSinA) / iridPeriod * 6.2831853 + iridBase;
+            const iridCosT = Math.cos(wavePhase), iridSinT = Math.sin(wavePhase);
+            r += iridAmp *  iridCosT;                                          if (r < 0) r = 0; else if (r > 255) r = 255;
+            g += iridAmp * (-0.5 * iridCosT - 0.8660254 * iridSinT);            if (g < 0) g = 0; else if (g > 255) g = 255;
+            b += iridAmp * (-0.5 * iridCosT + 0.8660254 * iridSinT);            if (b < 0) b = 0; else if (b > 255) b = 255;
+          }
+
+          // Sparkle blend — applied after the wave so a flashing cell reads
+          // as a clean flash rather than getting a rainbow-wave tint mixed
+          // into it. See the per-cell comment above for why this blends
+          // toward a fixed color instead of adding to the existing one.
+          if (sparkleActive) {
+            r = r * (1 - spMix) + spR * spMix;
+            g = g * (1 - spMix) + spG * spMix;
+            b = b * (1 - spMix) + spB * spMix;
+          }
+
+          // Cell rainbow blend — every cell, uniformly, at a fixed opacity.
+          if (cellRainbowOn) {
+            const rbLocalPhase = ((px - cx) * iridCosA + (py - cy) * iridSinA) * cellRbSpanInv;
+            const [rbR, rbG, rbB] = hueToRgb(cellRbHueBase + rbLocalPhase * 360, CELL_RAINBOW_L);
+            r = r * (1 - cellRainbowMix) + rbR * cellRainbowMix;
+            g = g * (1 - cellRainbowMix) + rbG * cellRainbowMix;
+            b = b * (1 - cellRainbowMix) + rbB * cellRainbowMix;
+          }
 
           if (mlGuard.checked && fixedOverlay) {
             const oi = i * 3;
@@ -2425,7 +2624,7 @@ function buildGIF(w, h, frames, delayCs) {
         if (frameCount % interval === 0) regenerateSeeds();
       }
       if (cycleN >= 2) cycleFrame = (cycleFrame + 1) % cycleN;
-      drawNoise();
+      drawNoise(ts / 1000);
       applyRegionMask();
       if (sswChk.checked && !drawMode) {
         if (sswStartTs === null) sswStartTs = ts;
@@ -2631,7 +2830,7 @@ function buildGIF(w, h, frames, delayCs) {
           if (!exporting) return;
           if (cycleN >= 2) cycleFrame = f % cycleN;
           if (loadedVideo) await prepareVideoFrame(f / gifFps);
-          drawNoise();
+          drawNoise(f / gifFps);
           applyRegionMask();
           if (sswChk.checked) applyScreensaver(f / gifFps);
           const src = (regionMask || (blurChk.checked && blurOffscreen) || sswChk.checked)
@@ -2707,7 +2906,7 @@ function buildGIF(w, h, frames, delayCs) {
           if (!exporting) { encoder.close(); return; }
           if (cycleN >= 2) cycleFrame = f % cycleN;
           if (loadedVideo) await prepareVideoFrame(f / fps);
-          drawNoise();
+          drawNoise(f / fps);
           if (document.getElementById('advChk').checked && advModelReady) {
             const eps  = +document.getElementById('advEpsS').value / 255;
             const stps = +document.getElementById('advStepsS').value;
@@ -2767,7 +2966,7 @@ function buildGIF(w, h, frames, delayCs) {
       let frame = 0;
       expInterval = setInterval(() => {
         if (!exporting) { clearInterval(expInterval); return; }
-        drawNoise();
+        drawNoise(frame / fps);
         if (sswChk.checked) applyScreensaver(frame / fps);
         frame++;
         progFill.style.width = (frame / total * 100).toFixed(1) + '%';
