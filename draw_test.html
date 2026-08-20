@@ -2975,8 +2975,8 @@ function buildGIF(w, h, frames, delayCs) {
   const SPARKLE_DARK_L   = [0.10, 0.28];             // [min,max] lightness range for dark jewel-tone facets
   const SPARKLE_DARK_MIX = [0.35, 0.80];             // [min,max] opacity range for dark facets — the "half-transparent dark fleck" look
   const SPARKLE_BG_DARKEN_MAX = 32;                  // at slider=100%, background lightness (0-100 scale) is pulled down by this much, for mood/contrast against the flecks
-  const CELL_RAINBOW_L       = 0.55;                 // fixed lightness for the whole-grid rainbow overlay
-  const CELL_RAINBOW_MIX_MAX = 0.5;                  // at slider=100%, every cell's rainbow gradient is blended in at up to 50% opacity
+  const CELL_RAINBOW_L       = 0.42;                 // fixed lightness for the whole-grid rainbow overlay — slightly below the 0.5 max-chroma point, for a dimmer/moodier rainbow
+  const CELL_RAINBOW_MIX_MAX = 0.62;                 // at slider=100%, every cell's rainbow gradient is blended in at up to 62% opacity
 
   // Fully-saturated RGB for a given hue in degrees and lightness (0..1) —
   // used for the sparkle flash color. Deliberately NOT reusing the app's
