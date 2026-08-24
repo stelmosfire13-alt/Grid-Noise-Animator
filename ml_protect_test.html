@@ -484,7 +484,24 @@
         <div class="field-label">保護強度 <em id="mlAmpV">16</em>/255</div>
         <input type="range" id="mlAmpS" min="6" max="40" value="16">
       </div>
-      <div class="field" style="margin-top:10px">
+      <div class="field" style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="dummyChk" style="width:14px;height:14px">
+          <span>ダミー画像重畳（テスト）</span>
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4">
+          アップロードした画像を、下の周期（フレーム数）の半分ごとに正負を反転させながら重ねます（なめらかな波ではなく矩形波）。1フレームごとに常に最大強度なので、再生を止めたコマは常にくっきり見えます。逆に周期を短くすると、再生中は正負が高速に切り替わって見た目には打ち消し合い、ほとんど見えなくなります。上の固定パターン（高周波・格子）と違い、こちらは1周期分のフレーム平均がちょうど0になるので、周期の整数倍のフレーム数で平均するとダミー画像の影響は消えて元の絵に戻ります（fpsが変わっても周期のフレーム数自体は変わりません）。
+        </div>
+        <div id="dummyField" style="display:none;margin-top:8px;">
+          <input type="file" id="dummyImgIn" accept="image/*" style="font-size:12px;width:100%;">
+          <div id="dummyImgName" style="display:none;margin-top:4px;font-size:0.72rem;color:#888;"></div>
+          <div class="field-label" style="margin-top:8px">周期 <em id="dummyPeriodV">2 フレーム</em></div>
+          <input type="range" id="dummyPeriodS" min="2" max="300" step="2" value="2">
+          <div class="field-label" style="margin-top:8px">濃度 <em id="dummyDensityV">50%</em></div>
+          <input type="range" id="dummyDensityS" min="0" max="100" value="50">
+        </div>
+      </div>
+      <div class="field" style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px;">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="checkbox" id="msgChk" style="width:14px;height:14px">
           <span>隠しメッセージを埋め込む</span>
@@ -997,6 +1014,12 @@ function buildGIF(w, h, frames, delayCs) {
   const mlGuardHF   = document.getElementById('mlGuardHF');
   const mlGuardGrid = document.getElementById('mlGuardGrid');
   const mlAmpS   = document.getElementById('mlAmpS');
+  const dummyChk      = document.getElementById('dummyChk');
+  const dummyField    = document.getElementById('dummyField');
+  const dummyImgIn    = document.getElementById('dummyImgIn');
+  const dummyImgName  = document.getElementById('dummyImgName');
+  const dummyPeriodS  = document.getElementById('dummyPeriodS');
+  const dummyDensityS = document.getElementById('dummyDensityS');
   const msgChk   = document.getElementById('msgChk');
   const msgText  = document.getElementById('msgText');
   const ocrChk   = document.getElementById('ocrChk');
@@ -1082,6 +1105,60 @@ function buildGIF(w, h, frames, delayCs) {
   mlAmpS.addEventListener('input', () => {
     document.getElementById('mlAmpV').textContent = mlAmpS.value;
     regenerateOverlay();
+    redrawIfStopped();
+  });
+
+  // ── Dummy image overlay (test): an uploaded image is blended in with an
+  // amplitude that oscillates as cos(2π·t / period) — a signal whose time
+  // average over any exact multiple of `period` seconds is exactly zero.
+  // Unlike the fixed high-freq/grid ML-guard patterns above (deliberately
+  // permanent so they survive averaging), this one is deliberately
+  // temporary: long-run frame averaging reconstructs the clean image, but
+  // any short observation window sees the dummy image fade in and out.
+  let dummyImg = null;
+  let dummyImgData = null; // Uint8ClampedArray, RGBA, always sized imgW×imgH
+  function regenerateDummyImgData() {
+    if (!dummyImg || !imgW || !imgH) { dummyImgData = null; return; }
+    const dc = document.createElement('canvas');
+    dc.width = imgW; dc.height = imgH;
+    const dctx = dc.getContext('2d');
+    // "Cover" fit: scale uniformly by the larger of the two ratios so the
+    // dummy image fully fills imgW×imgH with no gaps, then center-crop the
+    // overflow — keeps its original aspect ratio instead of stretching it.
+    const iw = dummyImg.naturalWidth  || dummyImg.width;
+    const ih = dummyImg.naturalHeight || dummyImg.height;
+    const scale = Math.max(imgW / iw, imgH / ih);
+    const dw = iw * scale, dh = ih * scale;
+    dctx.drawImage(dummyImg, (imgW - dw) / 2, (imgH - dh) / 2, dw, dh);
+    dummyImgData = dctx.getImageData(0, 0, imgW, imgH).data;
+  }
+  dummyChk.addEventListener('change', () => {
+    dummyField.style.display = dummyChk.checked ? 'block' : 'none';
+    redrawIfStopped();
+  });
+  dummyImgIn.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        dummyImg = img;
+        dummyImgName.textContent = file.name;
+        dummyImgName.style.display = 'block';
+        regenerateDummyImgData();
+        redrawIfStopped();
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+  dummyPeriodS.addEventListener('input', () => {
+    document.getElementById('dummyPeriodV').textContent = dummyPeriodS.value + ' フレーム';
+    redrawIfStopped();
+  });
+  dummyDensityS.addEventListener('input', () => {
+    document.getElementById('dummyDensityV').textContent = dummyDensityS.value + '%';
     redrawIfStopped();
   });
   msgChk.addEventListener('change', () => { regenerateOverlay(); redrawIfStopped(); });
@@ -1471,6 +1548,7 @@ function buildGIF(w, h, frames, delayCs) {
   let exporting   = false;
   let expInterval = null;
   let frameCount  = 0;
+  let dummyFrameIdx = 0; // increments once per rendered live-preview frame; drives the dummy-image overlay's frame-based period
 
   let cellMap   = null;
   let cellSeeds = null;
@@ -2179,6 +2257,7 @@ function buildGIF(w, h, frames, delayCs) {
 
     // Fixed adversarial overlay (image-specific, survives frame averaging)
     fixedOverlay = generateOverlay(pixels, w, h, +mlAmpS.value, currentMessage(), mlGuardHF.checked, mlGuardGrid.checked);
+    regenerateDummyImgData(); // rescale the dummy overlay image to the new w×h, if one is loaded
     blurOffscreen = document.createElement('canvas');
     blurOffscreen.width = w; blurOffscreen.height = h;
     blurOCtx = blurOffscreen.getContext('2d');
@@ -2344,7 +2423,7 @@ function buildGIF(w, h, frames, delayCs) {
 
     for (let f = 0; f < n; f++) {
       if (cycleN >= 2) cycleFrame = f % cycleN;
-      drawNoise(f / sswFps);
+      drawNoise(f / sswFps, f);
       if (sswChk.checked) applyScreensaver(f / sswFps);
       const frame = ctx.getImageData(0, 0, w, h).data;
       for (let i = 0, p = 0; i < w * h; i++, p += 4) {
@@ -2691,7 +2770,14 @@ function buildGIF(w, h, frames, delayCs) {
   // sequence of frames (the live loop, and the GIF/MP4/WebM export loops)
   // pass their own correctly-paced tSec explicitly instead, the same way
   // they already do for applyScreensaver(tSec).
-  function drawNoise(tSec) {
+  // frameIdx drives the dummy-image overlay's phase, in whole frames rather
+  // than seconds — so its period is exact regardless of fps (a GIF/MP4/WebM
+  // export or the frame-averaging test can use a different fps than the
+  // live preview without shifting how many actual frames make up one
+  // cycle). Falls back to an estimate from tSec × the current preview fps
+  // for the many ad-hoc redrawIfStopped() call sites that don't track a
+  // frame count at all — same fallback shape as tSec itself below.
+  function drawNoise(tSec, frameIdx) {
     if (!hslBuf) return;
     if (detailChk.checked && lowHslBuf) {
       if (voronoiChk.checked && cellMap) { drawNoiseDetailVoronoi(); drawWatermark(); return; }
@@ -2699,6 +2785,10 @@ function buildGIF(w, h, frames, delayCs) {
     }
     if (voronoiChk.checked) { drawNoiseVoronoi(); drawWatermark(); return; }
     if (tSec === undefined) tSec = performance.now() / 1000;
+    if (frameIdx === undefined) {
+      const previewFpsNow = Math.max(1, parseInt(document.getElementById('previewFps').value) || 60);
+      frameIdx = tSec * previewFpsNow;
+    }
     const dH  = +hueS.value;
     const dL  = +litS.value;
     const dS  = +satS.value;
@@ -2731,6 +2821,25 @@ function buildGIF(w, h, frames, delayCs) {
     // scattered glints.
     const cellRainbowOn  = cellRainbowChk.checked;
     const cellRainbowMix = cellRainbowOn ? (+cellRainbowS.value / 100) * CELL_RAINBOW_MIX_MAX : 0;
+    // Dummy image overlay (test): dummyOsc is the SAME for every pixel in
+    // this frame (depends only on frameIdx, not position), so it's computed
+    // once here rather than per-pixel. A square wave (not a smooth cosine)
+    // on purpose: every single frame sits at FULL +density or -density, so
+    // a paused frame always shows the dummy image at its clearest — while a
+    // cosine lingers near its peak for several consecutive frames (its
+    // slope is ~0 there), making a *slow*, visible pulse during playback.
+    // Flipping abruptly every half-period instead means playback alternates
+    // between +density and -density fast enough (for a short period) that
+    // persistence of vision blends the two into the clean original, while
+    // any single stopped frame is never a blend — always one full,
+    // unblended sign. Zero-mean over the full period is preserved exactly
+    // (half at +density, half at -density) as long as `period` is even,
+    // which is why the slider only offers even values.
+    const dummyOn = dummyChk.checked && !!dummyImgData;
+    const dummyPeriodFrames = +dummyPeriodS.value;
+    const dummyPhase = ((frameIdx % dummyPeriodFrames) + dummyPeriodFrames) % dummyPeriodFrames;
+    const dummySquare = dummyPhase < dummyPeriodFrames / 2 ? 1 : -1;
+    const dummyOsc = dummyOn ? dummySquare * (+dummyDensityS.value / 100) : 0;
 
     for (let ci = 0; ci < ROWS * COLS; ci++) {
       const { x: cx, y: cy, cw, ch } = cellBnds[ci];
@@ -2906,6 +3015,18 @@ function buildGIF(w, h, frames, delayCs) {
             r += fixedOverlay[oi];     if (r < 0) r = 0; else if (r > 255) r = 255;
             g += fixedOverlay[oi + 1]; if (g < 0) g = 0; else if (g > 255) g = 255;
             b += fixedOverlay[oi + 2]; if (b < 0) b = 0; else if (b > 255) b = 255;
+          }
+
+          // Dummy image overlay (test): the uploaded image's (pixel-128)
+          // delta scaled by dummyOsc (same value for every pixel this
+          // frame — see the per-frame comment above). At dummyOsc=0 (a
+          // quarter-cycle point) this vanishes entirely; over a full period
+          // its net contribution integrates to zero.
+          if (dummyOn) {
+            const di = i * 4;
+            r += (dummyImgData[di]     - 128) * dummyOsc; if (r < 0) r = 0; else if (r > 255) r = 255;
+            g += (dummyImgData[di + 1] - 128) * dummyOsc; if (g < 0) g = 0; else if (g > 255) g = 255;
+            b += (dummyImgData[di + 2] - 128) * dummyOsc; if (b < 0) b = 0; else if (b > 255) b = 255;
           }
 
           out[i4]     = r + 0.5 | 0;
@@ -3223,7 +3344,8 @@ function buildGIF(w, h, frames, delayCs) {
         if (frameCount % interval === 0) regenerateSeeds();
       }
       if (cycleN >= 2) cycleFrame = (cycleFrame + 1) % cycleN;
-      drawNoise(ts / 1000);
+      drawNoise(ts / 1000, dummyFrameIdx);
+      dummyFrameIdx++;
       applyRegionMask();
       if (sswChk.checked && !drawMode) {
         if (sswStartTs === null) sswStartTs = ts;
@@ -3238,7 +3360,7 @@ function buildGIF(w, h, frames, delayCs) {
   function startPlay() {
     if (playing || exporting || !hslBuf) return;
     playing = true;
-    lastTs = 0; frameCount = 0; cycleFrame = 0; sswStartTs = null;
+    lastTs = 0; frameCount = 0; cycleFrame = 0; sswStartTs = null; dummyFrameIdx = 0;
     if (cycleN >= 2) regenerateBaseAngles();
     animId = requestAnimationFrame(loop);
     if (loadedAudioBuffer) {
@@ -3449,7 +3571,7 @@ function buildGIF(w, h, frames, delayCs) {
           if (!exporting) return;
           if (cycleN >= 2) cycleFrame = f % cycleN;
           if (loadedVideo) await prepareVideoFrame(f / gifFps);
-          drawNoise(f / gifFps);
+          drawNoise(f / gifFps, f);
           applyRegionMask();
           if (sswChk.checked) applyScreensaver(f / gifFps);
           // ぼかし・スクリーンセイバー有効時はキャンバスから読み直す（変換後のピクセルを使う）
@@ -3527,7 +3649,7 @@ function buildGIF(w, h, frames, delayCs) {
           if (!exporting) { encoder.close(); return; }
           if (cycleN >= 2) cycleFrame = f % cycleN;
           if (loadedVideo) await prepareVideoFrame(f / fps);
-          drawNoise(f / fps);
+          drawNoise(f / fps, f);
           if (document.getElementById('advChk').checked && advModelReady) {
             const eps  = +document.getElementById('advEpsS').value / 255;
             const stps = +document.getElementById('advStepsS').value;
@@ -3588,7 +3710,7 @@ function buildGIF(w, h, frames, delayCs) {
       let frame = 0;
       expInterval = setInterval(() => {
         if (!exporting) { clearInterval(expInterval); return; }
-        drawNoise(frame / fps);
+        drawNoise(frame / fps, frame);
         if (sswChk.checked) applyScreensaver(frame / fps);
         frame++;
         progFill.style.width = (frame / total * 100).toFixed(1) + '%';
