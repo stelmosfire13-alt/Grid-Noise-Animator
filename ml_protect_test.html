@@ -2777,7 +2777,11 @@ function buildGIF(w, h, frames, delayCs) {
   // cycle). Falls back to an estimate from tSec × the current preview fps
   // for the many ad-hoc redrawIfStopped() call sites that don't track a
   // frame count at all — same fallback shape as tSec itself below.
-  function drawNoise(tSec, frameIdx) {
+  // dummySuppress forces the dummy overlay off for just this one frame,
+  // regardless of its square-wave phase — used by the export loops on the
+  // very first and last exported frame, since those are the ones a video
+  // host is likely to grab as a poster/thumbnail image.
+  function drawNoise(tSec, frameIdx, dummySuppress) {
     if (!hslBuf) return;
     if (detailChk.checked && lowHslBuf) {
       if (voronoiChk.checked && cellMap) { drawNoiseDetailVoronoi(); drawWatermark(); return; }
@@ -2839,7 +2843,7 @@ function buildGIF(w, h, frames, delayCs) {
     const dummyPeriodFrames = +dummyPeriodS.value;
     const dummyPhase = ((frameIdx % dummyPeriodFrames) + dummyPeriodFrames) % dummyPeriodFrames;
     const dummySquare = dummyPhase < dummyPeriodFrames / 2 ? 1 : -1;
-    const dummyOsc = dummyOn ? dummySquare * (+dummyDensityS.value / 100) : 0;
+    const dummyOsc = dummyOn && !dummySuppress ? dummySquare * (+dummyDensityS.value / 100) : 0;
 
     for (let ci = 0; ci < ROWS * COLS; ci++) {
       const { x: cx, y: cy, cw, ch } = cellBnds[ci];
@@ -3571,7 +3575,7 @@ function buildGIF(w, h, frames, delayCs) {
           if (!exporting) return;
           if (cycleN >= 2) cycleFrame = f % cycleN;
           if (loadedVideo) await prepareVideoFrame(f / gifFps);
-          drawNoise(f / gifFps, f);
+          drawNoise(f / gifFps, f, f === 0 || f === gifTotal - 1);
           applyRegionMask();
           if (sswChk.checked) applyScreensaver(f / gifFps);
           // ぼかし・スクリーンセイバー有効時はキャンバスから読み直す（変換後のピクセルを使う）
@@ -3649,7 +3653,7 @@ function buildGIF(w, h, frames, delayCs) {
           if (!exporting) { encoder.close(); return; }
           if (cycleN >= 2) cycleFrame = f % cycleN;
           if (loadedVideo) await prepareVideoFrame(f / fps);
-          drawNoise(f / fps, f);
+          drawNoise(f / fps, f, f === 0 || f === total - 1);
           if (document.getElementById('advChk').checked && advModelReady) {
             const eps  = +document.getElementById('advEpsS').value / 255;
             const stps = +document.getElementById('advStepsS').value;
@@ -3710,7 +3714,7 @@ function buildGIF(w, h, frames, delayCs) {
       let frame = 0;
       expInterval = setInterval(() => {
         if (!exporting) { clearInterval(expInterval); return; }
-        drawNoise(frame / fps, frame);
+        drawNoise(frame / fps, frame, frame === 0 || frame === total - 1);
         if (sswChk.checked) applyScreensaver(frame / fps);
         frame++;
         progFill.style.width = (frame / total * 100).toFixed(1) + '%';
