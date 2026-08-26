@@ -32,15 +32,33 @@
     .layout {
       display: grid;
       grid-template-columns: 264px 1fr;
+      grid-template-rows: auto;
       gap: 14px;
       align-items: start;
     }
-    /* デスクトップ: 左列に各カードを積み、preview は右列全体 */
-    .upload-card,
-    .grid-card,
-    .fx-card,
-    .ctrl-card,
-    .out-card    { grid-column: 1; }
+    /* デスクトップ: 左列の各カードは.control-col内に積み、そのカラムだけ
+       独立してスクロールできるようにする(設定項目が増えてきたため)。
+       position:sticky で、ページ全体をスクロールしてもビューポート内に
+       留まる(内部スクロールと共存)。 */
+    .control-col {
+      grid-column: 1;
+      grid-row: 1 / 99;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      max-height: calc(100vh - 44px);
+      overflow-y: auto;
+      overflow-x: hidden;
+      position: sticky;
+      top: 22px;
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .control-col::-webkit-scrollbar { width: 8px; }
+    .control-col::-webkit-scrollbar-track { background: transparent; }
+    .control-col::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .control-col::-webkit-scrollbar-thumb:hover { background: var(--accent); }
     /* min-width:0 stops preview-pane's manual resize from forcing the grid
        track (and the whole page) wider. (preview-pane itself opts out of
        the column's default cross-axis stretch via align-self, below, so
@@ -52,6 +70,11 @@
 
       .layout { grid-template-columns: 1fr; }
 
+      /* デスクトップ専用の .control-col ラッパーをレイアウト上「透明化」し、
+         中の各カードが直接 .layout の子として order で並び替えられるようにする
+         (モバイルでは列スクロールは不要なので、これで元の縦積み動作に戻る)。 */
+      .control-col { display: contents; }
+
       /* 全カードの grid 配置をリセットして order で並べ直す */
       .upload-card,
       .grid-card,
@@ -60,7 +83,7 @@
       .out-card,
       .preview-col { grid-column: auto; grid-row: auto; }
 
-      /* モバイル順: 画像選択 → プレビュー → 再生制御 → グリッド → エフェクト → 出力 */
+      /* モバイル順: 画像選択 → プレビュー → 再生制御 → グリッド → エフェクト → 画像の向き → ストーリーボード → 出力 */
       .upload-card  { order: 1; }
       .preview-col  { order: 2; }
       /* Desktop's width:min(100%,62vw) is sized against the two-column
@@ -80,7 +103,9 @@
       .ctrl-card    { order: 3; }
       .grid-card    { order: 4; }
       .fx-card      { order: 5; }
-      .out-card     { order: 6; }
+      .orient-card     { order: 6; }
+      .storyboard-card { order: 7; }
+      .out-card     { order: 8; }
 
       /* タッチターゲットを広げる */
       .btn { padding: 11px 14px; font-size: 0.88rem; min-height: 44px; }
@@ -130,15 +155,14 @@
     .dz-thumb {
       width: 100%; height: clamp(48px, 12vw, 80px);
       object-fit: cover;
-      display: none;
+      visibility: hidden;
       border-bottom: 1px solid var(--border);
     }
     .dz-inner { padding: 14px; text-align: center; color: var(--muted); font-size: 0.8rem; }
     .dz-name  {
-      font-size: 0.75rem; color: var(--text);
-      margin-top: 4px;
+      font-size: 0.75rem; line-height: 1.5; color: var(--text);
+      margin-top: 4px; min-height: 1.5em;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      display: none;
     }
 
     /* ── Sliders ── */
@@ -320,6 +344,7 @@
   </header>
 
   <div class="layout">
+    <div class="control-col">
     <div class="card upload-card">
       <div class="card-title">画像を選択</div>
       <div class="dz" id="dz">
@@ -329,18 +354,6 @@
           <div>クリックまたはドラッグ&amp;ドロップ</div>
           <div class="dz-name" id="dzName"></div>
         </div>
-      </div>
-      <div id="orientControls" style="display:none;margin-top:8px;">
-        <div style="font-size:11px;color:#888;margin-bottom:5px;line-height:1.4;">
-          画像の向きを変えます（AIは向きが変わると認識しづらくなる場合があります。人間は見慣れないだけで理解はできます）。
-        </div>
-        <div style="display:flex;gap:5px;">
-          <button class="btn btn-gray" id="rotateLeftBtn" style="flex:1;font-size:0.82rem;">⟲ 90°</button>
-          <button class="btn btn-gray" id="rotateRightBtn" style="flex:1;font-size:0.82rem;">⟳ 90°</button>
-          <button class="btn btn-gray" id="flipHBtn" style="flex:1;font-size:0.82rem;">⇋ 左右</button>
-          <button class="btn btn-gray" id="flipVBtn" style="flex:1;font-size:0.82rem;">⇕ 上下</button>
-        </div>
-        <button class="btn btn-gray btn-full" id="resetOrientBtn" style="margin-top:5px;font-size:0.78rem;" disabled>向きをリセット</button>
       </div>
       <div id="videoModeNotice" style="display:none;margin-top:8px;font-size:11px;color:#888;line-height:1.4;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;">
         <strong style="color:var(--text);">動画モード</strong>（<span id="videoModeInfo"></span>）: プレビューは1コマ目のみ表示されます。「動画を出力」を押すと全フレームにノイズ処理をかけます（時間がかかります）。詳細モード・WebM出力には対応していません。
@@ -363,6 +376,7 @@
           <input type="checkbox" id="voronoiChk" style="width:14px;height:14px">
           <span>拡張モード</span>
         </label>
+        <div style="font-size:0.72rem;color:var(--muted);margin-left:22px;margin-top:2px">不定形ノイズを使用</div>
       </div>
       <div id="morphField" style="display:none;margin-top:8px">
         <div class="field-label">変化間隔 <em id="morphV">10 f</em></div>
@@ -374,6 +388,7 @@
             <input type="checkbox" id="detailChk" style="width:14px;height:14px">
             <span>詳細モード</span>
           </label>
+          <div style="font-size:0.72rem;color:var(--muted);margin-left:22px;margin-top:2px">分離型ノイズを使用</div>
         </div>
         <div id="detailField" style="display:none;margin-top:8px">
           <div class="field">
@@ -527,6 +542,44 @@
       </div>
     </div>
 
+    <div class="card orient-card" id="orientControls" style="display:none;">
+      <div class="card-title">画像の向き</div>
+      <div style="font-size:11px;color:#888;margin-bottom:5px;line-height:1.4;">
+        画像の向きを変えます（AIは向きが変わると認識しづらくなる場合があります。人間は見慣れないだけで理解はできます）。
+      </div>
+      <div style="display:flex;gap:5px;">
+        <button class="btn btn-gray" id="rotateLeftBtn" style="flex:1;font-size:0.82rem;">⟲ 90°</button>
+        <button class="btn btn-gray" id="rotateRightBtn" style="flex:1;font-size:0.82rem;">⟳ 90°</button>
+        <button class="btn btn-gray" id="flipHBtn" style="flex:1;font-size:0.82rem;">⇋ 左右</button>
+        <button class="btn btn-gray" id="flipVBtn" style="flex:1;font-size:0.82rem;">⇕ 上下</button>
+      </div>
+      <button class="btn btn-gray btn-full" id="resetOrientBtn" style="margin-top:5px;font-size:0.78rem;" disabled>向きをリセット</button>
+    </div><!-- /orient-card -->
+
+    <div class="card storyboard-card">
+      <div class="card-title">ストーリーボード（テスト）</div>
+      <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">
+        最大6コマまで、それぞれ独立してお絵描き・画像/動画読み込みができます（アンドゥ・回転・範囲指定もコマごとに保持）。タブでコマを切り替えて編集し、あとで各コマの表示時間を決めて1本の動画/GIFに結合できます。
+      </div>
+      <div id="panelTabs" style="display:flex;gap:4px;margin-bottom:8px;">
+        <button class="btn btn-gray panel-tab" data-panel="0" style="flex:1;font-size:0.8rem;padding:6px 2px;">1</button>
+        <button class="btn btn-gray panel-tab" data-panel="1" style="flex:1;font-size:0.8rem;padding:6px 2px;">2</button>
+        <button class="btn btn-gray panel-tab" data-panel="2" style="flex:1;font-size:0.8rem;padding:6px 2px;">3</button>
+        <button class="btn btn-gray panel-tab" data-panel="3" style="flex:1;font-size:0.8rem;padding:6px 2px;">4</button>
+        <button class="btn btn-gray panel-tab" data-panel="4" style="flex:1;font-size:0.8rem;padding:6px 2px;">5</button>
+        <button class="btn btn-gray panel-tab" data-panel="5" style="flex:1;font-size:0.8rem;padding:6px 2px;">6</button>
+      </div>
+      <div class="field">
+        <div class="field-label">このコマの表示時間 <em id="panelDurV">2.0 秒</em></div>
+        <input type="range" id="panelDurS" min="0" max="10" step="0.5" value="2">
+      </div>
+      <button class="btn btn-gray btn-full" id="panelClearBtn" style="margin-top:6px;font-size:0.78rem;">このコマを空にする</button>
+      <button class="btn btn-blue btn-full" id="combinePreviewBtn" style="margin-top:10px;font-size:0.85rem;">▶ 全コマを結合してプレビュー</button>
+      <div style="font-size:10px;color:#777;margin-top:4px;line-height:1.4;">
+        各コマを表示時間ぶんずつ順番にループ再生します。書き出したい時は下の「動画を出力」を押してください（複数コマを編集していれば自動的に結合されます。表示時間を0秒にするとそのコマは飛ばされます）。
+      </div>
+    </div><!-- /storyboard-card -->
+
     <div class="card ctrl-card">
       <div class="card-title">プレビュー制御</div>
       <div class="field" style="margin-bottom:10px">
@@ -619,6 +672,7 @@
       </div>
       <div class="status" id="st">画像を読み込んでください</div>
     </div>
+    </div><!-- /control-col -->
 
 
     <div class="preview-col">
@@ -665,7 +719,10 @@
           <button type="button" class="btn btn-gray" id="paintUndoBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">↩ 元に戻す</button>
           <button type="button" class="btn btn-gray" id="paintClearBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🗑 描画を消す</button>
           <button type="button" class="btn btn-gray" id="paintSaveBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">💾 画像を保存</button>
+          <button type="button" class="btn btn-gray" id="paintCopyBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">📋 コピー</button>
+          <button type="button" class="btn btn-gray" id="paintPasteBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">📥 ペースト</button>
         </div>
+        <div style="font-size:10px;color:#777;line-height:1.4;">コピーで今のコマの絵を記憶し、別のコマに切り替えてからペーストすると貼り付けられます。</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <input type="text" id="paintTextS" placeholder="テキストを入力" maxlength="40" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
           <button type="button" class="btn btn-gray" id="paintTextModeBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔤 文字を置く</button>
@@ -3339,23 +3396,62 @@ function buildGIF(w, h, frames, delayCs) {
 
   // ── Preview animation ─────────────────────────────────────────────────────
   let lastTs = 0;
+  // Storyboard combined preview (test): when active, loop() cycles through
+  // combinedPreviewOrder by elapsed real time instead of rendering the
+  // current single panel — each panel gets its own panelDurations[] slice,
+  // looping back to the first panel once the whole sequence has played.
+  // Reuses the exact same play/pause/animId machinery as normal single-
+  // panel playback (see startPlay/stopPlay below) rather than a separate
+  // RAF loop, so pausing/rotating/etc. all keep working the same way.
+  let combinedPreviewActive = false;
+  let combinedPreviewOrder = [];
+  let combinedPreviewStartTs = null;
+  let combinedPreviewPanelIdx = -1;
   function loop(ts) {
     const fps = Math.max(1, parseInt(document.getElementById('previewFps').value) || 60);
     if (ts - lastTs >= 1000 / fps) {
-      if (voronoiChk.checked) {
-        frameCount++;
-        const interval = Math.max(1, parseInt(morphS.value) || 10);
-        if (frameCount % interval === 0) regenerateSeeds();
+      if (combinedPreviewActive) {
+        if (combinedPreviewStartTs === null) combinedPreviewStartTs = ts;
+        const totalDur = combinedPreviewOrder.reduce((s, i) => s + panelDurations[i], 0) || 1;
+        const elapsed = ((ts - combinedPreviewStartTs) / 1000) % totalDur;
+        let acc = 0, targetIdx = combinedPreviewOrder.length - 1, localT = 0;
+        for (let k = 0; k < combinedPreviewOrder.length; k++) {
+          const d = panelDurations[combinedPreviewOrder[k]];
+          if (elapsed < acc + d) { targetIdx = k; localT = elapsed - acc; break; }
+          acc += d;
+        }
+        if (targetIdx !== combinedPreviewPanelIdx) {
+          combinedPreviewPanelIdx = targetIdx;
+          currentPanel = combinedPreviewOrder[targetIdx];
+          restorePanel(currentPanel);
+          // restorePanel() → stopAll() resets playing/animId/button state —
+          // reassert the "playing" UI right after, same pattern as
+          // markExporting() does for the combine-export loop above.
+          playing = true;
+          playBtn.disabled = true; pauseBtn.disabled = false;
+          setBadge('▶ 再生中', 'playing');
+          setStatus(`結合プレビュー再生中… コマ${currentPanel + 1} / ${combinedPreviewOrder.length}`);
+        }
+        drawNoise(localT, dummyFrameIdx);
+        dummyFrameIdx++;
+        applyRegionMask();
+        drawRegionOverlay();
+      } else {
+        if (voronoiChk.checked) {
+          frameCount++;
+          const interval = Math.max(1, parseInt(morphS.value) || 10);
+          if (frameCount % interval === 0) regenerateSeeds();
+        }
+        if (cycleN >= 2) cycleFrame = (cycleFrame + 1) % cycleN;
+        drawNoise(ts / 1000, dummyFrameIdx);
+        dummyFrameIdx++;
+        applyRegionMask();
+        if (sswChk.checked && !drawMode) {
+          if (sswStartTs === null) sswStartTs = ts;
+          applyScreensaver((ts - sswStartTs) / 1000);
+        }
+        drawRegionOverlay();
       }
-      if (cycleN >= 2) cycleFrame = (cycleFrame + 1) % cycleN;
-      drawNoise(ts / 1000, dummyFrameIdx);
-      dummyFrameIdx++;
-      applyRegionMask();
-      if (sswChk.checked && !drawMode) {
-        if (sswStartTs === null) sswStartTs = ts;
-        applyScreensaver((ts - sswStartTs) / 1000);
-      }
-      drawRegionOverlay();
       lastTs = ts;
     }
     animId = requestAnimationFrame(loop);
@@ -3402,7 +3498,7 @@ function buildGIF(w, h, frames, delayCs) {
   }
 
   playBtn.addEventListener('click',  startPlay);
-  pauseBtn.addEventListener('click', stopPlay);
+  pauseBtn.addEventListener('click', () => { combinedPreviewActive = false; stopPlay(); });
 
   // ── Audio loading (test) ──────────────────────────────────────────────────
   // Decoded once up front into an AudioBuffer (raw PCM) so both export paths
@@ -3547,53 +3643,137 @@ function buildGIF(w, h, frames, delayCs) {
     cycleFrame = 0;
     if (cycleN >= 2) regenerateBaseAngles();
 
+    // ── Storyboard auto-combine ──────────────────────────────────────────
+    // If more than one panel has been used, "動画を出力" automatically
+    // stitches them together (each panel plays for its own duration,
+    // combineable — see panels[]/panelDurations[] below) instead of just
+    // exporting the current single panel. A single-panel session (nobody
+    // touched the storyboard tabs, or only one is in use) behaves exactly
+    // as before, using durIn/imgW/imgH/canvas unchanged.
+    snapshotIntoPanel(currentPanel);
+    const combineOrder = includedPanelOrder();
+    const isCombining = combineOrder.length > 1;
+    const returnToPanel = currentPanel;
+
     const fps   = Math.max(1, parseInt(document.getElementById('fpsIn').value)  || 60);
     const durCap = loadedVideo ? Math.min(120, Math.max(1, Math.ceil(videoDuration))) : 120;
     const dur   = Math.max(1, Math.min(durCap, parseInt(document.getElementById('durIn').value) || 5));
     const total = fps * dur;
     const fmt   = document.getElementById('formatSel').value;
 
-    exporting = true;
-    playBtn.disabled = true; pauseBtn.disabled = true; expBtn.disabled = true;
-    prog.style.display = 'block'; progFill.style.width = '0%';
+    function markExporting() {
+      exporting = true;
+      playBtn.disabled = true; pauseBtn.disabled = true; expBtn.disabled = true;
+      combinePreviewBtn.disabled = true;
+      prog.style.display = 'block';
+    }
+    markExporting();
+    progFill.style.width = '0%';
     setBadge('● REC', 'recording');
-    setStatus(`録画中… 0 / ${total} フレーム`);
+    setStatus(isCombining ? '結合エクスポート準備中...' : `録画中… 0 / ${total} フレーム`);
+
+    // Combine-mode setup: restore the first included panel to learn its
+    // rendered size, then every panel's frames get "cover" fit (same
+    // technique as the dummy-image overlay below) into one FIXED-size
+    // combinedCanvas, since different panels can each have their own
+    // native image size.
+    let combinedCanvas, combinedCtx, outW, outH, framesPerPanel, totalCombinedFrames, totalCombinedDurSec;
+    function drawCurrentFrameIntoCombined() {
+      const scale = Math.max(outW / imgW, outH / imgH);
+      const dw = imgW * scale, dh = imgH * scale;
+      combinedCtx.drawImage(canvas, (outW - dw) / 2, (outH - dh) / 2, dw, dh);
+    }
+    function restoreAfterCombine() {
+      if (!isCombining) return;
+      const finalStatus = stEl.textContent; // restorePanel()→processImage() would otherwise clobber the "出力完了…" message
+      currentPanel = returnToPanel;
+      restorePanel(returnToPanel);
+      setStatus(finalStatus);
+      combinePreviewBtn.disabled = false;
+    }
+    if (isCombining) {
+      currentPanel = combineOrder[0];
+      restorePanel(combineOrder[0]);
+      markExporting();
+      outW = imgW; outH = imgH;
+      combinedCanvas = document.createElement('canvas');
+      combinedCanvas.width = outW; combinedCanvas.height = outH;
+      combinedCtx = combinedCanvas.getContext('2d');
+      framesPerPanel = combineOrder.map(i => Math.round(panelDurations[i] * fps));
+      totalCombinedFrames = framesPerPanel.reduce((a, b) => a + b, 0);
+      totalCombinedDurSec = totalCombinedFrames / fps;
+    }
 
     if (fmt === 'gif') {
       // ── GIF: 自前エンコーダー（外部依存なし）────────────────────────────
       const gifFps   = Math.min(fps, 50);          // GIF 実用上限 50fps
       const delayCs  = Math.max(2, Math.round(100 / gifFps));  // centiseconds
-      const gifTotal = Math.round(dur * gifFps);
 
-      setStatus('GIF パレット準備中...');
+      setStatus(isCombining ? '結合GIF パレット準備中...' : 'GIF パレット準備中...');
       await new Promise(r => setTimeout(r, 0));
       getGifLut();  // lazy LUT 構築（初回のみ ~50ms）
 
-      const frames = [];
-      (async () => {
-        for (let f = 0; f < gifTotal; f++) {
+      if (isCombining) {
+        const framesPerPanelGif = combineOrder.map(i => Math.round(panelDurations[i] * gifFps));
+        const totalGifFrames = framesPerPanelGif.reduce((a, b) => a + b, 0);
+        const frames = [];
+        (async () => {
+          try {
+            let globalFrame = 0;
+            for (let pi = 0; pi < combineOrder.length; pi++) {
+              if (pi > 0) { currentPanel = combineOrder[pi]; restorePanel(combineOrder[pi]); markExporting(); }
+              const nFrames = framesPerPanelGif[pi];
+              for (let f = 0; f < nFrames; f++) {
+                if (!exporting) return;
+                if (loadedVideo) await prepareVideoFrame(f / gifFps);
+                drawNoise(f / gifFps, globalFrame, globalFrame === 0 || globalFrame === totalGifFrames - 1);
+                applyRegionMask();
+                if (sswChk.checked) applyScreensaver(f / gifFps);
+                drawCurrentFrameIntoCombined();
+                frames.push(quantizeToGif(combinedCtx.getImageData(0, 0, outW, outH).data));
+                globalFrame++;
+                progFill.style.width = (globalFrame / totalGifFrames * 100).toFixed(1) + '%';
+                setStatus(`結合GIF録画中… コマ${combineOrder[pi] + 1} — ${globalFrame} / ${totalGifFrames} フレーム`);
+                if (globalFrame % 10 === 0) await new Promise(r => setTimeout(r, 0));
+              }
+            }
+            if (!exporting) return;
+            setStatus('GIF エンコード中...');
+            await new Promise(r => setTimeout(r, 0));
+            const data = buildGIF(outW, outH, frames, delayCs);
+            exporting = false;
+            exportDone(new Blob([data], { type: 'image/gif' }), 'gif', gifFps, totalGifFrames / gifFps);
+          } catch (e) { stopAll(); setStatus('結合GIFエラー: ' + e.message); }
+          finally { restoreAfterCombine(); }
+        })();
+      } else {
+        const gifTotal = Math.round(dur * gifFps);
+        const frames = [];
+        (async () => {
+          for (let f = 0; f < gifTotal; f++) {
+            if (!exporting) return;
+            if (cycleN >= 2) cycleFrame = f % cycleN;
+            if (loadedVideo) await prepareVideoFrame(f / gifFps);
+            drawNoise(f / gifFps, f, f === 0 || f === gifTotal - 1);
+            applyRegionMask();
+            if (sswChk.checked) applyScreensaver(f / gifFps);
+            // ぼかし・スクリーンセイバー有効時はキャンバスから読み直す（変換後のピクセルを使う）
+            const src = (regionMask || (blurChk.checked && blurOffscreen) || sswChk.checked)
+              ? ctx.getImageData(0, 0, imgW, imgH).data
+              : outBuf;
+            frames.push(quantizeToGif(src));
+            progFill.style.width = ((f + 1) / gifTotal * 100).toFixed(1) + '%';
+            setStatus(`GIF 録画中… ${f + 1} / ${gifTotal} フレーム`);
+            if (f % 10 === 9) await new Promise(r => setTimeout(r, 0));
+          }
           if (!exporting) return;
-          if (cycleN >= 2) cycleFrame = f % cycleN;
-          if (loadedVideo) await prepareVideoFrame(f / gifFps);
-          drawNoise(f / gifFps, f, f === 0 || f === gifTotal - 1);
-          applyRegionMask();
-          if (sswChk.checked) applyScreensaver(f / gifFps);
-          // ぼかし・スクリーンセイバー有効時はキャンバスから読み直す（変換後のピクセルを使う）
-          const src = (regionMask || (blurChk.checked && blurOffscreen) || sswChk.checked)
-            ? ctx.getImageData(0, 0, imgW, imgH).data
-            : outBuf;
-          frames.push(quantizeToGif(src));
-          progFill.style.width = ((f + 1) / gifTotal * 100).toFixed(1) + '%';
-          setStatus(`GIF 録画中… ${f + 1} / ${gifTotal} フレーム`);
-          if (f % 10 === 9) await new Promise(r => setTimeout(r, 0));
-        }
-        if (!exporting) return;
-        setStatus('GIF エンコード中...');
-        await new Promise(r => setTimeout(r, 0));
-        const data = buildGIF(imgW, imgH, frames, delayCs);
-        exporting = false;
-        exportDone(new Blob([data], { type: 'image/gif' }), 'gif', gifFps, dur);
-      })().catch(e => { stopAll(); setStatus('GIF エラー: ' + e.message); });
+          setStatus('GIF エンコード中...');
+          await new Promise(r => setTimeout(r, 0));
+          const data = buildGIF(imgW, imgH, frames, delayCs);
+          exporting = false;
+          exportDone(new Blob([data], { type: 'image/gif' }), 'gif', gifFps, dur);
+        })().catch(e => { stopAll(); setStatus('GIF エラー: ' + e.message); });
+      }
 
     } else if (fmt === 'mp4') {
       // ── MP4: WebCodecs (VideoEncoder) + mp4-muxer ────────────────────────
@@ -3608,12 +3788,14 @@ function buildGIF(w, h, frames, delayCs) {
         return;
       }
 
+      const mp4W = isCombining ? outW : imgW, mp4H = isCombining ? outH : imgH;
+
       // H.264コーデック候補を順に試す
       const codecCandidates = ['avc1.42001f', 'avc1.4d0028', 'avc1.640028'];
       let chosenCodec = null;
       for (const c of codecCandidates) {
         try {
-          const s = await VideoEncoder.isConfigSupported({ codec: c, width: imgW, height: imgH });
+          const s = await VideoEncoder.isConfigSupported({ codec: c, width: mp4W, height: mp4H });
           if (s.supported) { chosenCodec = c; break; }
         } catch {}
       }
@@ -3631,7 +3813,7 @@ function buildGIF(w, h, frames, delayCs) {
       const target = new ArrayBufferTarget();
       const muxerOpts = {
         target,
-        video: { codec: 'avc', width: imgW, height: imgH },
+        video: { codec: 'avc', width: mp4W, height: mp4H },
         fastStart: 'in-memory',
       };
       if (audioCodec) {
@@ -3644,83 +3826,187 @@ function buildGIF(w, h, frames, delayCs) {
         error:  (e) => { stopAll(); setStatus('エンコードエラー: ' + e.message); },
       });
       encoder.configure({
-        codec: chosenCodec, width: imgW, height: imgH,
+        codec: chosenCodec, width: mp4W, height: mp4H,
         bitrate: 8_000_000, framerate: fps,
       });
 
-      (async () => {
-        for (let f = 0; f < total; f++) {
-          if (!exporting) { encoder.close(); return; }
-          if (cycleN >= 2) cycleFrame = f % cycleN;
-          if (loadedVideo) await prepareVideoFrame(f / fps);
-          drawNoise(f / fps, f, f === 0 || f === total - 1);
-          if (document.getElementById('advChk').checked && advModelReady) {
-            const eps  = +document.getElementById('advEpsS').value / 255;
-            const stps = +document.getElementById('advStepsS').value;
-            setStatus(`frame ${f + 1} / ${total}`);
-            await applyPGD(eps, stps);
+      if (isCombining) {
+        (async () => {
+          try {
+            let globalFrame = 0;
+            for (let pi = 0; pi < combineOrder.length; pi++) {
+              if (pi > 0) { currentPanel = combineOrder[pi]; restorePanel(combineOrder[pi]); markExporting(); }
+              const nFrames = framesPerPanel[pi];
+              for (let f = 0; f < nFrames; f++) {
+                if (!exporting) { encoder.close(); return; }
+                if (loadedVideo) await prepareVideoFrame(f / fps);
+                drawNoise(f / fps, globalFrame, globalFrame === 0 || globalFrame === totalCombinedFrames - 1);
+                if (document.getElementById('advChk').checked && advModelReady) {
+                  const eps  = +document.getElementById('advEpsS').value / 255;
+                  const stps = +document.getElementById('advStepsS').value;
+                  await applyPGD(eps, stps);
+                }
+                applyRegionMask();
+                if (sswChk.checked) applyScreensaver(f / fps);
+                drawCurrentFrameIntoCombined();
+                const vf = new VideoFrame(combinedCanvas, { timestamp: Math.round(globalFrame * 1e6 / fps) });
+                encoder.encode(vf, { keyFrame: globalFrame % 60 === 0 });
+                vf.close();
+                while (encoder.encodeQueueSize > 10) await new Promise(r => setTimeout(r, 5));
+                globalFrame++;
+                progFill.style.width = (globalFrame / totalCombinedFrames * 100).toFixed(1) + '%';
+                setStatus(`結合MP4録画中… コマ${combineOrder[pi] + 1} — ${globalFrame} / ${totalCombinedFrames} フレーム`);
+                if (globalFrame % 5 === 0) await new Promise(r => setTimeout(r, 0));
+              }
+            }
+            if (!exporting) return;
+            await encoder.flush();
+            if (audioCodec) {
+              setStatus('音声をエンコード中...');
+              await muxAudioTrack(muxer, audioCodec, totalCombinedDurSec);
+            }
+            muxer.finalize();
+            exporting = false;
+            exportDone(new Blob([target.buffer], { type: 'video/mp4' }), 'mp4', fps, totalCombinedDurSec);
+          } catch (e) { stopAll(); setStatus('結合MP4エラー: ' + e.message); }
+          finally { restoreAfterCombine(); }
+        })();
+      } else {
+        (async () => {
+          for (let f = 0; f < total; f++) {
+            if (!exporting) { encoder.close(); return; }
+            if (cycleN >= 2) cycleFrame = f % cycleN;
+            if (loadedVideo) await prepareVideoFrame(f / fps);
+            drawNoise(f / fps, f, f === 0 || f === total - 1);
+            if (document.getElementById('advChk').checked && advModelReady) {
+              const eps  = +document.getElementById('advEpsS').value / 255;
+              const stps = +document.getElementById('advStepsS').value;
+              setStatus(`frame ${f + 1} / ${total}`);
+              await applyPGD(eps, stps);
+            }
+            applyRegionMask();
+            if (sswChk.checked) applyScreensaver(f / fps);
+            const vf = new VideoFrame(canvas, { timestamp: Math.round(f * 1e6 / fps) });
+            encoder.encode(vf, { keyFrame: f % 60 === 0 });
+            vf.close();
+            while (encoder.encodeQueueSize > 10) await new Promise(r => setTimeout(r, 5));
+            progFill.style.width = ((f + 1) / total * 100).toFixed(1) + '%';
+            setStatus(`MP4 録画中… ${f + 1} / ${total} フレーム`);
+            if (f % 5 === 4) await new Promise(r => setTimeout(r, 0));
           }
-          applyRegionMask();
-          if (sswChk.checked) applyScreensaver(f / fps);
-          const vf = new VideoFrame(canvas, { timestamp: Math.round(f * 1e6 / fps) });
-          encoder.encode(vf, { keyFrame: f % 60 === 0 });
-          vf.close();
-          while (encoder.encodeQueueSize > 10) await new Promise(r => setTimeout(r, 5));
-          progFill.style.width = ((f + 1) / total * 100).toFixed(1) + '%';
-          setStatus(`MP4 録画中… ${f + 1} / ${total} フレーム`);
-          if (f % 5 === 4) await new Promise(r => setTimeout(r, 0));
-        }
-        if (!exporting) return;
-        await encoder.flush();
-        if (audioCodec) {
-          setStatus('音声をエンコード中...');
-          await muxAudioTrack(muxer, audioCodec, dur);
-        }
-        muxer.finalize();
-        exporting = false;
-        exportDone(new Blob([target.buffer], { type: 'video/mp4' }), 'mp4', fps, dur);
-      })().catch(e => { stopAll(); setStatus('MP4エラー: ' + e.message); });
+          if (!exporting) return;
+          await encoder.flush();
+          if (audioCodec) {
+            setStatus('音声をエンコード中...');
+            await muxAudioTrack(muxer, audioCodec, dur);
+          }
+          muxer.finalize();
+          exporting = false;
+          exportDone(new Blob([target.buffer], { type: 'video/mp4' }), 'mp4', fps, dur);
+        })().catch(e => { stopAll(); setStatus('MP4エラー: ' + e.message); });
+      }
 
     } else {
       // ── WebM: MediaRecorder ───────────────────────────────────────────────
       const codecs = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
       const mime   = codecs.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
 
-      const stream = canvas.captureStream(fps);
-      let audioCtxForExport = null, audioSrcForExport = null;
-      if (loadedAudioBuffer) {
-        audioCtxForExport = new (window.AudioContext || window.webkitAudioContext)();
-        audioSrcForExport = audioCtxForExport.createBufferSource();
-        audioSrcForExport.buffer = loadedAudioBuffer;
-        const dest = audioCtxForExport.createMediaStreamDestination();
-        audioSrcForExport.connect(dest);
-        dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
-        audioSrcForExport.start(0);
+      if (isCombining) {
+        // Paced at real 1/fps intervals — MediaRecorder timestamps each
+        // captured frame by when it actually arrives in real time, so
+        // firing frames as fast as the CPU can produce them (no pacing)
+        // silently compresses the whole recording into a fraction of a
+        // second and drops most of it, since restoring a panel + rendering
+        // a frame is far faster than real 1000/fps ms (confirmed by
+        // testing: a 3-panel, 3-second export came out ~0.4s long with
+        // only the first panel's content, before this fix).
+        const stream = combinedCanvas.captureStream(fps);
+        let audioCtxForExport = null, audioSrcForExport = null;
+        if (loadedAudioBuffer) {
+          audioCtxForExport = new (window.AudioContext || window.webkitAudioContext)();
+          audioSrcForExport = audioCtxForExport.createBufferSource();
+          audioSrcForExport.buffer = loadedAudioBuffer;
+          const dest = audioCtxForExport.createMediaStreamDestination();
+          audioSrcForExport.connect(dest);
+          dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+          audioSrcForExport.start(0);
+        }
+        const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
+        const chunks = [];
+        const stopped = new Promise(resolve => {
+          recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+          recorder.onstop = () => {
+            if (audioSrcForExport) { try { audioSrcForExport.stop(); } catch {} }
+            if (audioCtxForExport) audioCtxForExport.close();
+            resolve();
+          };
+          recorder.onerror = () => { stopAll(); setStatus('録画中にエラーが発生しました。'); resolve(); };
+        });
+        recorder.start(200);
+
+        (async () => {
+          try {
+            let pi = 0, f = 0, globalFrame = 0;
+            await new Promise(resolve => {
+              const iv = setInterval(() => {
+                if (!exporting) { clearInterval(iv); recorder.stop(); resolve(); return; }
+                if (f >= framesPerPanel[pi]) { pi++; f = 0; if (pi < combineOrder.length) { currentPanel = combineOrder[pi]; restorePanel(combineOrder[pi]); markExporting(); } }
+                if (pi >= combineOrder.length) { clearInterval(iv); recorder.stop(); resolve(); return; }
+                drawNoise(f / fps, globalFrame, globalFrame === 0 || globalFrame === totalCombinedFrames - 1);
+                applyRegionMask();
+                if (sswChk.checked) applyScreensaver(f / fps);
+                drawCurrentFrameIntoCombined();
+                f++;
+                globalFrame++;
+                progFill.style.width = (globalFrame / totalCombinedFrames * 100).toFixed(1) + '%';
+                setStatus(`結合WebM録画中… コマ${combineOrder[pi] + 1} — ${globalFrame} / ${totalCombinedFrames} フレーム`);
+                if (globalFrame >= totalCombinedFrames) { clearInterval(iv); recorder.stop(); resolve(); }
+              }, 1000 / fps);
+            });
+            if (!exporting) return;
+            await stopped;
+            exporting = false;
+            exportDone(new Blob(chunks, { type: mime.split(';')[0] }), 'webm', fps, totalCombinedDurSec);
+          } catch (e) { stopAll(); setStatus('結合WebMエラー: ' + e.message); }
+          finally { restoreAfterCombine(); }
+        })();
+      } else {
+        const stream = canvas.captureStream(fps);
+        let audioCtxForExport = null, audioSrcForExport = null;
+        if (loadedAudioBuffer) {
+          audioCtxForExport = new (window.AudioContext || window.webkitAudioContext)();
+          audioSrcForExport = audioCtxForExport.createBufferSource();
+          audioSrcForExport.buffer = loadedAudioBuffer;
+          const dest = audioCtxForExport.createMediaStreamDestination();
+          audioSrcForExport.connect(dest);
+          dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+          audioSrcForExport.start(0);
+        }
+        const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
+        const chunks   = [];
+
+        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        recorder.onstop = () => {
+          clearInterval(expInterval); expInterval = null;
+          if (audioSrcForExport) { try { audioSrcForExport.stop(); } catch {} }
+          if (audioCtxForExport) audioCtxForExport.close();
+          exporting = false;
+          exportDone(new Blob(chunks, { type: mime.split(';')[0] }), 'webm', fps, dur);
+        };
+        recorder.onerror = () => { stopAll(); setStatus('録画中にエラーが発生しました。'); };
+
+        recorder.start(200);
+        let frame = 0;
+        expInterval = setInterval(() => {
+          if (!exporting) { clearInterval(expInterval); return; }
+          drawNoise(frame / fps, frame, frame === 0 || frame === total - 1);
+          if (sswChk.checked) applyScreensaver(frame / fps);
+          frame++;
+          progFill.style.width = (frame / total * 100).toFixed(1) + '%';
+          setStatus(`WebM 録画中… ${frame} / ${total} フレーム  (${(frame / fps).toFixed(1)} 秒)`);
+          if (frame >= total) { clearInterval(expInterval); expInterval = null; recorder.stop(); }
+        }, 1000 / fps);
       }
-      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
-      const chunks   = [];
-
-      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-      recorder.onstop = () => {
-        clearInterval(expInterval); expInterval = null;
-        if (audioSrcForExport) { try { audioSrcForExport.stop(); } catch {} }
-        if (audioCtxForExport) audioCtxForExport.close();
-        exporting = false;
-        exportDone(new Blob(chunks, { type: mime.split(';')[0] }), 'webm', fps, dur);
-      };
-      recorder.onerror = () => { stopAll(); setStatus('録画中にエラーが発生しました。'); };
-
-      recorder.start(200);
-      let frame = 0;
-      expInterval = setInterval(() => {
-        if (!exporting) { clearInterval(expInterval); return; }
-        drawNoise(frame / fps, frame, frame === 0 || frame === total - 1);
-        if (sswChk.checked) applyScreensaver(frame / fps);
-        frame++;
-        progFill.style.width = (frame / total * 100).toFixed(1) + '%';
-        setStatus(`WebM 録画中… ${frame} / ${total} フレーム  (${(frame / fps).toFixed(1)} 秒)`);
-        if (frame >= total) { clearInterval(expInterval); expInterval = null; recorder.stop(); }
-      }, 1000 / fps);
     }
   });
 
@@ -3748,6 +4034,8 @@ function buildGIF(w, h, frames, delayCs) {
   const paintUndoBtn     = document.getElementById('paintUndoBtn');
   const paintClearBtn    = document.getElementById('paintClearBtn');
   const paintSaveBtn     = document.getElementById('paintSaveBtn');
+  const paintCopyBtn     = document.getElementById('paintCopyBtn');
+  const paintPasteBtn    = document.getElementById('paintPasteBtn');
   const paintTextS       = document.getElementById('paintTextS');
   const paintTextModeBtn = document.getElementById('paintTextModeBtn');
   const adjBrightS   = document.getElementById('adjBrightS');
@@ -3777,6 +4065,15 @@ function buildGIF(w, h, frames, delayCs) {
   let pristineCanvas = null; // snapshot taken at each processImage() call, for the "clear my drawing" button
   const MAX_UNDO = 3;
   let undoStack = []; // snapshots taken right before each committed paint action, oldest first, for the multi-level undo button
+  // Cross-panel clipboard (test): a flattened snapshot of one panel's
+  // origCanvas (base image + paint, already composited), settable via
+  // paintCopyBtn and consumable via paintPasteBtn after switching to a
+  // different storyboard panel. Deliberately just one canvas, not tied to
+  // panels[] — copying doesn't touch the source panel, and pasting is
+  // treated exactly like loading a brand-new image into the CURRENT panel
+  // (see paintPasteBtn's handler below), so it goes through processImage()
+  // like any other upload and needs no special-casing elsewhere.
+  let panelClipboard = null;
 
   // Called right before origCanvas is about to be mutated by a committed
   // paint action (stroke, text stamp, fill, or "clear my drawing") —
@@ -3931,9 +4228,10 @@ function buildGIF(w, h, frames, delayCs) {
   // of this session.
   function setAdjustToolsDisabled(disabled) {
     [paintColorS, paintSizeS, paintAlphaS, paintBlendS, paintEraserBtn, paintEyedropBtn, paintFillBtn,
-     paintTextS, paintTextModeBtn, paintClearBtn, paintSaveBtn].forEach(el => { el.disabled = disabled; });
+     paintTextS, paintTextModeBtn, paintClearBtn, paintSaveBtn, paintCopyBtn].forEach(el => { el.disabled = disabled; });
     ['rotateLeftBtn', 'rotateRightBtn', 'flipHBtn', 'flipVBtn'].forEach(id => { document.getElementById(id).disabled = disabled; });
     paintUndoBtn.disabled = disabled || undoStack.length === 0;
+    paintPasteBtn.disabled = disabled || !panelClipboard;
     document.getElementById('resetOrientBtn').disabled = disabled || (orientRotation === 0 && !orientFlipH && !orientFlipV);
   }
 
@@ -4349,6 +4647,40 @@ function buildGIF(w, h, frames, delayCs) {
     }, 'image/png');
   });
 
+  // Cross-panel copy/paste (test): copy grabs a flattened snapshot of the
+  // CURRENT panel's picture (base image + paint already composited, exactly
+  // what paintSaveBtn above would save), independent of which panel is
+  // active when paste eventually runs. Paste feeds that snapshot back
+  // through processImage() as if it were a freshly uploaded image for
+  // whichever panel is active AT THAT TIME — so the intended workflow is
+  // copy on panel A, switch tabs (which already goes through
+  // snapshotIntoPanel/restorePanel), then paste on panel B.
+  paintCopyBtn.addEventListener('click', () => {
+    if (!origCanvas) return;
+    panelClipboard = cloneCanvasEl(origCanvas);
+    paintPasteBtn.disabled = false;
+    setStatus('コピーしました（別のコマに切り替えてペーストできます）');
+  });
+
+  paintPasteBtn.addEventListener('click', () => {
+    if (!panelClipboard || !paintMode) return;
+    adjCancelSession();
+    loadedVideo = null;
+    loadedName = 'コピーした画像';
+    orientRotation = 0; orientFlipH = false; orientFlipV = false; orientHistory = [];
+    paintAccum = null;
+    document.getElementById('videoModeNotice').style.display = 'none';
+    setVideoModeRestrictions(false);
+    document.getElementById('orientControls').style.display = 'block';
+    updateOrientResetBtn();
+    const pasted = panelClipboard;
+    loadedImg = pasted;
+    processImage(pasted, loadedName);
+    dzThumb.src = pasted.toDataURL('image/png'); dzThumb.style.visibility = 'visible';
+    dzName.textContent = loadedName;
+    setStatus('ペーストしました');
+  });
+
   paintModeBtn.addEventListener('click', () => {
     paintMode = !paintMode;
     if (paintMode) {
@@ -4381,7 +4713,18 @@ function buildGIF(w, h, frames, delayCs) {
   // through the exact same processImage() an upload would use (see
   // mediaNaturalWidth's .width/.height fallback above, which is what lets
   // a plain <canvas> stand in for an <img>/<video> here).
-  function initBlankCanvas() {
+  // ── Blank canvas by default (test) ──────────────────────────────────────
+  // Before any upload, the preview pane shows a live, paintable white
+  // canvas instead of the "please load an image" placeholder — routed
+  // through the exact same processImage() an upload would use (see
+  // mediaNaturalWidth's .width/.height fallback above, which is what lets
+  // a plain <canvas> stand in for an <img>/<video> here).
+  // Sets up a fresh blank white canvas as "the loaded image", without
+  // touching paint-mode state — reused both by initBlankCanvas() (page
+  // load, where entering paint mode automatically is desired) and by the
+  // storyboard's empty-panel restore (where the CURRENT paint-mode state
+  // must survive switching tabs, not get toggled by re-running this).
+  function resetToBlankCanvas() {
     const w = 480, h = 480;
     const blank = document.createElement('canvas');
     blank.width = w; blank.height = h;
@@ -4396,13 +4739,166 @@ function buildGIF(w, h, frames, delayCs) {
     document.getElementById('orientControls').style.display = 'block';
     updateOrientResetBtn();
     processImage(blank, '白紙');
+  }
+  function initBlankCanvas() {
+    resetToBlankCanvas();
     // Desktop: nothing else to do with a blank canvas, so start drawing
     // right away. Mobile: screen space is precious and the paint toolbar
     // takes up a lot of it, so leave it opt-in (same 680px breakpoint used
     // elsewhere for mobile-specific layout, e.g. syncPreviewAspect above).
     if (window.innerWidth > 680) paintModeBtn.click();
   }
+
+  // ── Storyboard (test): up to 6 independent panels ───────────────────────
+  // Each panel is a full editing session (image/video, orientation, paint,
+  // undo, region selection) — switching panels snapshots the live state
+  // into panels[] and restores the target slot through the exact same
+  // processImage()/reprocessWithOrientation()/initBlankCanvas() pipeline a
+  // normal upload or orientation change already goes through, so nothing
+  // here needs to know about hslBuf/cellBnds/fixedOverlay/etc: those are
+  // always freshly re-derived on restore, never stored directly. Only the
+  // "source of truth" state (what was drawn/loaded/rotated) is snapshotted.
+  const MAX_PANELS = 6;
+  const DEFAULT_PANEL_DUR = 2;
+  let panels = new Array(MAX_PANELS).fill(null);
+  let panelDurations = new Array(MAX_PANELS).fill(DEFAULT_PANEL_DUR);
+  let panelVisited = new Array(MAX_PANELS).fill(false);
+  let currentPanel = 0;
+
+  function cloneCanvasEl(c) {
+    if (!c) return null;
+    const cc = document.createElement('canvas');
+    cc.width = c.width; cc.height = c.height;
+    cc.getContext('2d').drawImage(c, 0, 0);
+    return cc;
+  }
+
+  function snapshotIntoPanel(index) {
+    panels[index] = {
+      loadedImg, loadedVideo, loadedName, videoDuration,
+      orientRotation, orientFlipH, orientFlipV,
+      orientHistory: orientHistory.slice(),
+      paintAccum: cloneCanvasEl(paintAccum),
+      undoStack: undoStack.map(u => ({ orig: cloneCanvasEl(u.orig), paint: cloneCanvasEl(u.paint) })),
+      regionPolygons: regionPolygons.map(poly => poly.map(pt => ({ ...pt }))),
+      applyInside,
+      thumbSrc: dzThumb.style.visibility !== 'hidden' ? dzThumb.src : null,
+      thumbName: dzName.textContent || '',
+    };
+    panelVisited[index] = true;
+  }
+
+  function restorePanel(index) {
+    const p = panels[index];
+    stopAll();
+    if (!p) {
+      orientRotation = 0; orientFlipH = false; orientFlipV = false; orientHistory = [];
+      paintAccum = null;
+      undoStack = [];
+      regionPoints = []; regionPolygons = []; regionMask = null; applyInside = false;
+      document.getElementById('applyModeBtn').textContent = _rgOutside;
+      setVideoModeRestrictions(false);
+      resetToBlankCanvas();
+      dzThumb.src = ''; dzThumb.style.visibility = 'hidden';
+      dzName.textContent = '';
+    } else {
+      loadedImg = p.loadedImg;
+      loadedVideo = p.loadedVideo;
+      loadedName = p.loadedName;
+      videoDuration = p.videoDuration;
+      orientRotation = p.orientRotation;
+      orientFlipH = p.orientFlipH;
+      orientFlipV = p.orientFlipV;
+      orientHistory = p.orientHistory.slice();
+      paintAccum = cloneCanvasEl(p.paintAccum);
+      regionPolygons = p.regionPolygons.map(poly => poly.map(pt => ({ ...pt })));
+      regionPoints = [];
+      applyInside = p.applyInside;
+      document.getElementById('applyModeBtn').textContent = applyInside ? _rgInside : _rgOutside;
+      setVideoModeRestrictions(!!loadedVideo);
+      document.getElementById('orientControls').style.display = 'block';
+      updateOrientResetBtn();
+      reprocessWithOrientation();
+      undoStack = p.undoStack.map(u => ({ orig: cloneCanvasEl(u.orig), paint: cloneCanvasEl(u.paint) }));
+      paintUndoBtn.disabled = undoStack.length === 0;
+      dzThumb.src = p.thumbSrc || '';
+      dzThumb.style.visibility = p.thumbSrc ? 'visible' : 'hidden';
+      dzName.textContent = p.thumbName || '';
+    }
+    document.getElementById('panelDurS').value = panelDurations[index];
+    document.getElementById('panelDurV').textContent = panelDurations[index].toFixed(1) + ' 秒';
+    updatePanelTabsUI();
+  }
+
+  function updatePanelTabsUI() {
+    for (let i = 0; i < MAX_PANELS; i++) {
+      const btn = document.querySelector(`.panel-tab[data-panel="${i}"]`);
+      if (i === currentPanel) {
+        btn.style.background = 'var(--accent)';
+        btn.style.color = '#fff';
+        btn.style.borderColor = 'var(--accent)';
+      } else {
+        btn.style.background = '';
+        btn.style.color = '';
+        btn.style.borderColor = panelVisited[i] ? 'var(--accent)' : 'var(--border)';
+      }
+    }
+  }
+
+  document.querySelectorAll('.panel-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = +btn.dataset.panel;
+      if (idx === currentPanel) return;
+      snapshotIntoPanel(currentPanel);
+      currentPanel = idx;
+      restorePanel(idx);
+    });
+  });
+
+  document.getElementById('panelDurS').addEventListener('input', () => {
+    const v = +document.getElementById('panelDurS').value;
+    panelDurations[currentPanel] = v;
+    document.getElementById('panelDurV').textContent = v.toFixed(1) + ' 秒';
+  });
+
+  document.getElementById('panelClearBtn').addEventListener('click', () => {
+    panels[currentPanel] = null;
+    panelVisited[currentPanel] = false;
+    restorePanel(currentPanel);
+  });
+
+  // ── Combined preview + auto-combine export (test) ───────────────────────
+  // includedPanelOrder() is shared by both the live preview below and by
+  // expBtn's auto-combine logic (see the "動画を出力" handler earlier in
+  // this file) — a panel counts as "in the story" once it's been snapshotted
+  // (i.e. visited at least once) AND its duration is above zero (0 = "skip
+  // this panel", per the duration slider's min).
+  function includedPanelOrder() {
+    const order = [];
+    for (let i = 0; i < MAX_PANELS; i++) if (panels[i] && panelDurations[i] > 0) order.push(i);
+    return order;
+  }
+
+  const combinePreviewBtn = document.getElementById('combinePreviewBtn');
+  combinePreviewBtn.addEventListener('click', () => {
+    if (exporting) return;
+    combinedPreviewActive = false;
+    stopPlay();
+    snapshotIntoPanel(currentPanel);
+    const order = includedPanelOrder();
+    if (order.length === 0) { setStatus('編集済みのコマがありません（まず何か描くか画像を読み込んでください）'); return; }
+    combinedPreviewOrder = order;
+    combinedPreviewPanelIdx = -1;
+    combinedPreviewStartTs = null;
+    combinedPreviewActive = true;
+    startPlay();
+    setStatus(`結合プレビュー再生中…（${order.length}コマ、合計${order.reduce((s, i) => s + panelDurations[i], 0).toFixed(1)}秒をループ再生）`);
+  });
+
   initBlankCanvas();
+  panelVisited[0] = true;
+  updatePanelTabsUI();
+
 })();
 </script>
 
