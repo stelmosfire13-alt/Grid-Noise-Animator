@@ -626,7 +626,10 @@
         </div>
         <div style="font-size:10px;color:#777;line-height:1.4;">העתקה זוכרת את התמונה של הפאנל הזה — עברו לפאנל אחר והדביקו כדי למקם אותה שם.</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <input type="text" id="paintTextS" placeholder="הזן טקסט" maxlength="40" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+          <textarea id="paintTextS" placeholder="הזן טקסט (ניתן לשבור שורה)" maxlength="100" rows="2" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:inherit;resize:vertical;"></textarea>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;color:var(--muted);">
+            <input type="checkbox" id="paintVerticalChk" style="width:13px;height:13px">כתיבה אנכית
+          </label>
           <button type="button" class="btn btn-gray" id="paintTextModeBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔤 הצב טקסט</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:8px;">
@@ -3241,6 +3244,7 @@ function buildGIF(w, h, frames, delayCs) {
   const paintCopyBtn     = document.getElementById('paintCopyBtn');
   const paintPasteBtn    = document.getElementById('paintPasteBtn');
   const paintTextS       = document.getElementById('paintTextS');
+  const paintVerticalChk = document.getElementById('paintVerticalChk');
   const paintTextModeBtn = document.getElementById('paintTextModeBtn');
   const adjBrightS   = document.getElementById('adjBrightS');
   const adjBrightV   = document.getElementById('adjBrightV');
@@ -3356,7 +3360,7 @@ function buildGIF(w, h, frames, delayCs) {
 
   function setAdjustToolsDisabled(disabled) {
     [paintColorS, paintSizeS, paintAlphaS, paintBlendS, paintEraserBtn, paintEyedropBtn, paintFillBtn,
-     paintTextS, paintTextModeBtn, paintClearBtn, paintSaveBtn, paintCopyBtn].forEach(el => { el.disabled = disabled; });
+     paintTextS, paintVerticalChk, paintTextModeBtn, paintClearBtn, paintSaveBtn, paintCopyBtn].forEach(el => { el.disabled = disabled; });
     ['rotateLeftBtn', 'rotateRightBtn', 'flipHBtn', 'flipVBtn'].forEach(id => { document.getElementById(id).disabled = disabled; });
     paintUndoBtn.disabled = disabled || undoStack.length === 0;
   paintPasteBtn.disabled = disabled || !panelClipboard;
@@ -3510,6 +3514,50 @@ function buildGIF(w, h, frames, delayCs) {
     updateMLResistance();
   }
 
+  const VERTICAL_ROTATE_CHARS = new Set(['ー', '〜', '~', '−', '‐']);
+  function drawStampedText(ctx, text, x, y, fontSize, vertical) {
+    ctx.font = `${fontSize}px sans-serif`;
+    const lines = text.split('\n');
+    if (!vertical) {
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      const lineHeight = fontSize * 1.3;
+      let maxWidth = 0;
+      lines.forEach((line, i) => {
+        ctx.fillText(line, x, y + i * lineHeight);
+        maxWidth = Math.max(maxWidth, ctx.measureText(line).width);
+      });
+      return { boxX: x, boxY: y - fontSize, boxW: maxWidth, boxH: fontSize + (lines.length - 1) * lineHeight };
+    }
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const colWidth = fontSize;
+    let maxChars = 0;
+    lines.forEach((line, li) => {
+      const cx = x - li * colWidth;
+      let cy = y + fontSize / 2;
+      for (const ch of Array.from(line)) {
+        if (VERTICAL_ROTATE_CHARS.has(ch)) {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(Math.PI / 2);
+          ctx.fillText(ch, 0, 0);
+          ctx.restore();
+        } else {
+          ctx.fillText(ch, cx, cy);
+        }
+        cy += fontSize;
+      }
+      maxChars = Math.max(maxChars, Array.from(line).length);
+    });
+    return {
+      boxX: x - (lines.length - 1) * colWidth - colWidth / 2,
+      boxY: y,
+      boxW: lines.length * colWidth,
+      boxH: fontSize * maxChars,
+    };
+  }
+
   function stampText(pos) {
     if (!paintMode || !hslBuf) return;
     const text = paintTextS.value;
@@ -3517,26 +3565,22 @@ function buildGIF(w, h, frames, delayCs) {
     snapshotForUndo();
     const oc2 = origCanvas.getContext('2d');
     const fontSize = Math.max(8, (+paintSizeS.value || 6) * 4);
+    const vertical = paintVerticalChk.checked;
     ensureStrokeLayer();
     const maskCtx = strokeLayerCanvas.getContext('2d');
     maskCtx.clearRect(0, 0, imgW, imgH);
-    maskCtx.font = `${fontSize}px sans-serif`;
-    maskCtx.textBaseline = 'alphabetic';
     maskCtx.fillStyle = '#000';
-    maskCtx.fillText(text, pos.x, pos.y);
+    drawStampedText(maskCtx, text, pos.x, pos.y, fontSize, vertical);
     oc2.globalAlpha = paintAlpha();
     oc2.globalCompositeOperation = paintBlendS.value;
-    oc2.font = `${fontSize}px sans-serif`;
-    oc2.textBaseline = 'alphabetic';
     oc2.fillStyle = paintStrokeColor();
-    oc2.fillText(text, pos.x, pos.y);
+    const box = drawStampedText(oc2, text, pos.x, pos.y, fontSize, vertical);
     oc2.globalAlpha = 1;
     oc2.globalCompositeOperation = 'source-over';
     accumulatePaintFromMask(strokeLayerCanvas);
-    const metrics = oc2.measureText(text);
     const pad = 4;
     if (detailChk.checked) decompose();
-    refreshRegion(pos.x - pad, pos.y - fontSize - pad, metrics.width + pad * 2, fontSize + pad * 2);
+    refreshRegion(box.boxX - pad, box.boxY - pad, box.boxW + pad * 2, box.boxH + pad * 2);
     origImageData = oc2.getImageData(0, 0, imgW, imgH);
     computeImageStats();
     updateMLResistance();
