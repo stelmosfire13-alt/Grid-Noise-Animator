@@ -224,7 +224,7 @@
       background: #000;
       border: 1px solid var(--border);
       border-radius: 10px;
-      overflow: auto;
+      overflow: hidden;
       display: flex; align-items: center; justify-content: center;
       width: min(100%, 62vw);
       height: clamp(200px, 55vw, 640px);
@@ -258,6 +258,18 @@
       z-index: 6;
       display: none;
       white-space: nowrap;
+    }
+    /* Wraps mainCanvas+regionOverlay so paint mode's pan/zoom (a CSS
+       transform on this element, applied by JS — see "Paint view pan/zoom"
+       below) moves both together as one rigid unit. Left at the exact same
+       box (100%×100% of .preview-pane) mainCanvas/regionOverlay already
+       expected, so nothing about their own sizing/positioning logic needed
+       to change — only this new wrapper's transform does the work. */
+    #paintViewport {
+      width: 100%; height: 100%;
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+      transform-origin: 0 0;
     }
     #mainCanvas {
       display: none;
@@ -1315,8 +1327,10 @@
     <div class="preview-col">
       <div class="preview-pane">
       <span class="preview-empty" id="emptyMsg">画像を読み込むとここに表示されます</span>
+      <div id="paintViewport">
       <canvas id="mainCanvas"></canvas>
       <canvas id="regionOverlay"></canvas>
+      </div>
       <div class="badge" id="badge"></div>
       <div class="resize-grip" id="resizeGrip" title="ドラッグでプレビューの大きさを変更"></div>
       <div class="resize-size-label" id="resizeSizeLabel"></div>
@@ -1358,8 +1372,9 @@
           <button type="button" class="btn btn-gray" id="paintSaveBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">💾 画像を保存</button>
           <button type="button" class="btn btn-gray" id="paintCopyBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">📋 コピー</button>
           <button type="button" class="btn btn-gray" id="paintPasteBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">📥 ペースト</button>
+          <button type="button" class="btn btn-gray" id="paintViewResetBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔍 表示リセット</button>
         </div>
-        <div style="font-size:10px;color:#777;line-height:1.4;">コピーで今のコマの絵を記憶し、別のコマに切り替えてからペーストすると貼り付けられます。</div>
+        <div style="font-size:10px;color:#777;line-height:1.4;">コピーで今のコマの絵を記憶し、別のコマに切り替えてからペーストすると貼り付けられます。PC: マウスホイールで拡大縮小、右クリックドラッグで移動。スマホ: 2本指ピンチで拡大縮小、2本指スライドで移動。</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <textarea id="paintTextS" placeholder="テキストを入力（改行可）" maxlength="100" rows="2" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:inherit;resize:vertical;"></textarea>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;color:var(--muted);">
@@ -2687,6 +2702,7 @@ function buildGIF(w, h, frames, delayCs) {
 
     canvas.style.display = 'block';
     syncCanvasSize();
+    resetPaintView(); // a new/reprocessed image invalidates any prior paint-mode zoom/pan
     emptyMsg.style.display = 'none';
     drawOriginal();
     playBtn.disabled = false;
@@ -3500,6 +3516,7 @@ function buildGIF(w, h, frames, delayCs) {
   // handlers only ever run in response to a later user gesture, by which
   // time the whole script (including that declaration) has executed.
   overlay.addEventListener('mousedown', e => {
+    if (paintMode && e.button === 2) return; // right-click drags the view instead of painting — see "Paint view pan/zoom" below
     const pos = overlayToImage(e);
     if (paintMode) { if (!colorAdjustMode) routePaintClick(pos); } else startDraw(pos);
   });
@@ -3526,19 +3543,118 @@ function buildGIF(w, h, frames, delayCs) {
   overlay.addEventListener('touchstart', e => {
     if (!drawMode && !paintMode) return;
     e.preventDefault();
+    if (paintMode && e.touches.length >= 2) {
+      if (isPainting) endPaint(); // commit whatever the first finger was mid-stroke on before switching to pinch
+      beginPinch(e.touches);
+      return;
+    }
+    if (pinchActive) return; // a second finger is still down somewhere — ignore new touch starts until the pinch fully ends
     const pos = touchPos(e);
     if (paintMode) { if (!colorAdjustMode) routePaintClick(pos); } else startDraw(pos);
   }, { passive: false });
   overlay.addEventListener('touchmove', e => {
-    if (!isDrawing && !isPainting) return;
     e.preventDefault();
+    if (paintMode && pinchActive && e.touches.length >= 2) { updatePinch(e.touches); return; }
+    if (!isDrawing && !isPainting) return;
     const pos = touchPos(e);
     if (paintMode) movePaint(pos); else moveDraw(pos);
   }, { passive: false });
   overlay.addEventListener('touchend', e => {
     e.preventDefault();
+    if (pinchActive) { if (e.touches.length < 2) pinchActive = false; return; }
     if (paintMode) endPaint(); else endDraw();
   }, { passive: false });
+  overlay.addEventListener('touchcancel', () => { pinchActive = false; });
+
+  // ── Paint view pan/zoom (test) ───────────────────────────────────────────
+  // Purely a CSS transform on #paintViewport (the wrapper around mainCanvas
+  // + regionOverlay, see its CSS) — zooms/pans the DISPLAY only, never
+  // touching imgW/imgH or origCanvas. Every existing pointer-to-image
+  // coordinate function (overlayToImage/clientToOverlayPx/drawBrushCursor)
+  // already derives everything from getBoundingClientRect(), which reflects
+  // CSS transforms automatically, so none of them needed to change for this.
+  const paintViewport = document.getElementById('paintViewport');
+  let paintZoom = 1, paintPanX = 0, paintPanY = 0;
+  const PAINT_ZOOM_MIN = 1, PAINT_ZOOM_MAX = 8;
+
+  function applyPaintTransform() {
+    paintViewport.style.transform = `translate(${paintPanX}px, ${paintPanY}px) scale(${paintZoom})`;
+  }
+  function resetPaintView() {
+    paintZoom = 1; paintPanX = 0; paintPanY = 0;
+    applyPaintTransform();
+  }
+
+  // Keeps whatever content is currently under (clientX, clientY) fixed at
+  // that same screen position while the zoom level changes — "zoom toward
+  // the cursor" rather than always zooming from center. transform-origin is
+  // 0 0 (paintViewport's own top-left) and the transform is
+  // `translate() scale()` (composes scale-then-translate) — writing out
+  // screen-position = base + local*zoom + pan for a fixed content point
+  // before and after the zoom change and solving for the new pan cancels
+  // out `base` and `local` entirely, leaving just this.
+  function zoomAt(clientX, clientY, newZoom) {
+    newZoom = Math.min(PAINT_ZOOM_MAX, Math.max(PAINT_ZOOM_MIN, newZoom));
+    if (newZoom === paintZoom) return;
+    const rect = paintViewport.getBoundingClientRect();
+    const ratio = newZoom / paintZoom;
+    paintPanX += (clientX - rect.left) * (1 - ratio);
+    paintPanY += (clientY - rect.top) * (1 - ratio);
+    paintZoom = newZoom;
+    applyPaintTransform();
+  }
+
+  previewPane.addEventListener('wheel', e => {
+    if (!paintMode) return;
+    e.preventDefault();
+    zoomAt(e.clientX, e.clientY, paintZoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+  }, { passive: false });
+
+  // Right-click-drag pans. The browser's own context menu is suppressed only
+  // while paint mode is active — normal right-click elsewhere on the page is
+  // untouched. move/up listen on window (not overlay) so the drag keeps
+  // tracking correctly even if the cursor slips off the canvas mid-drag.
+  overlay.addEventListener('contextmenu', e => { if (paintMode) e.preventDefault(); });
+  let paintViewDragging = false, paintViewDragStart = null;
+  overlay.addEventListener('mousedown', e => {
+    if (!paintMode || e.button !== 2) return;
+    e.preventDefault();
+    paintViewDragging = true;
+    paintViewDragStart = { x: e.clientX, y: e.clientY, panX: paintPanX, panY: paintPanY };
+  });
+  window.addEventListener('mousemove', e => {
+    if (!paintViewDragging) return;
+    paintPanX = paintViewDragStart.panX + (e.clientX - paintViewDragStart.x);
+    paintPanY = paintViewDragStart.panY + (e.clientY - paintViewDragStart.y);
+    applyPaintTransform();
+  });
+  window.addEventListener('mouseup', e => { if (e.button === 2) paintViewDragging = false; });
+
+  // Two-finger pinch-to-zoom + slide-to-pan (mobile). Handled per-frame as
+  // two independent adjustments — zoomAt() re-anchors the zoom at the
+  // CURRENT midpoint every tick (so the content under the fingers stays
+  // under the fingers as they spread/pinch), then the midpoint's own
+  // frame-to-frame drift is added on top as a plain pan. Summed over many
+  // touchmove ticks this reproduces a combined pinch+pan gesture correctly;
+  // a single calculation anchored only at the gesture's start point could
+  // not (it has no way to also account for the anchor itself sliding).
+  let pinchActive = false, pinchStartDist = 0, pinchStartZoom = 1, pinchLastMid = null;
+  function touchDist(t0, t1) { return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY); }
+  function touchMid(t0, t1) { return { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 }; }
+  function beginPinch(touches) {
+    pinchActive = true;
+    pinchStartDist = touchDist(touches[0], touches[1]);
+    pinchStartZoom = paintZoom;
+    pinchLastMid = touchMid(touches[0], touches[1]);
+  }
+  function updatePinch(touches) {
+    const mid = touchMid(touches[0], touches[1]);
+    zoomAt(mid.x, mid.y, pinchStartZoom * (touchDist(touches[0], touches[1]) / pinchStartDist));
+    paintPanX += mid.x - pinchLastMid.x;
+    paintPanY += mid.y - pinchLastMid.y;
+    applyPaintTransform();
+    pinchLastMid = mid;
+  }
 
   document.getElementById('drawRegionBtn').addEventListener('click', () => {
     drawMode = !drawMode;
@@ -4229,6 +4345,7 @@ function buildGIF(w, h, frames, delayCs) {
   const paintSaveBtn     = document.getElementById('paintSaveBtn');
   const paintCopyBtn     = document.getElementById('paintCopyBtn');
   const paintPasteBtn    = document.getElementById('paintPasteBtn');
+  const paintViewResetBtn = document.getElementById('paintViewResetBtn');
   const paintTextS       = document.getElementById('paintTextS');
   const paintVerticalChk = document.getElementById('paintVerticalChk');
   const paintTextModeBtn = document.getElementById('paintTextModeBtn');
@@ -4930,6 +5047,8 @@ function buildGIF(w, h, frames, delayCs) {
     setStatus('ペーストしました');
   });
 
+  paintViewResetBtn.addEventListener('click', () => { resetPaintView(); });
+
   paintModeBtn.addEventListener('click', () => {
     paintMode = !paintMode;
     if (paintMode) {
@@ -4941,6 +5060,7 @@ function buildGIF(w, h, frames, delayCs) {
       if (playing) stopPlay();
       sswChk.disabled = true; sswPeriodS.disabled = true; sswScaleS.disabled = true;
       paintControls.style.display = 'flex';
+      resetPaintView(); // start each paint session at 1:1 rather than resuming wherever the last one left off
       if (hslBuf) drawOriginal();
     } else {
       adjCancelSession(); // leaving paint mode mid-session would strand adjBaseSnapshot pointing at a canvas nothing can see anymore
@@ -4951,6 +5071,7 @@ function buildGIF(w, h, frames, delayCs) {
       sswChk.disabled = false; sswPeriodS.disabled = false; sswScaleS.disabled = false;
       paintControls.style.display = 'none';
       paintCursorPos = null;
+      resetPaintView(); // the normal (non-paint) view should never show leftover zoom/pan
       drawRegionOverlay(); // pointerEvents:none stops interaction but not stale rendering — clear the cursor circle explicitly
       redrawIfStopped();
     }
