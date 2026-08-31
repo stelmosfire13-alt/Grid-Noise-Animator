@@ -3540,21 +3540,58 @@ function buildGIF(w, h, frames, delayCs) {
     const t = e.touches[0] || e.changedTouches[0];
     return overlayToImage({ clientX: t.clientX, clientY: t.clientY });
   }
+
+  // A real-world two-finger pinch almost never lands both fingers in the
+  // same event tick — the first finger's touchstart fires alone a beat
+  // before the second one arrives. Committing to a paint action immediately
+  // on that first touchstart (as if it were a one-finger tap) means every
+  // pinch starts by stamping/drawing a stray mark. So in paint mode, a
+  // single-finger touchstart doesn't act right away — it waits a brief
+  // moment first, just long enough for a second finger to show up and
+  // cancel it in favor of a pinch. A genuine one-finger tap/stroke still
+  // starts almost immediately (short enough not to feel laggy), and
+  // finishes early if the finger lifts before the delay elapses anyway.
+  const PAINT_TOUCH_START_DELAY_MS = 80;
+  let pendingPaintTimer = null, pendingPaintPos = null;
+  function firePendingPaintStart() {
+    if (pendingPaintTimer === null) return;
+    clearTimeout(pendingPaintTimer);
+    pendingPaintTimer = null;
+    if (!colorAdjustMode) routePaintClick(pendingPaintPos);
+    pendingPaintPos = null;
+  }
+  function cancelPendingPaintStart() {
+    if (pendingPaintTimer === null) return;
+    clearTimeout(pendingPaintTimer);
+    pendingPaintTimer = null;
+    pendingPaintPos = null;
+  }
+
   overlay.addEventListener('touchstart', e => {
     if (!drawMode && !paintMode) return;
     e.preventDefault();
     if (paintMode && e.touches.length >= 2) {
+      cancelPendingPaintStart(); // the first finger's touch was the start of this pinch, not a tap — it never gets committed
       if (isPainting) endPaint(); // commit whatever the first finger was mid-stroke on before switching to pinch
       beginPinch(e.touches);
       return;
     }
     if (pinchActive) return; // a second finger is still down somewhere — ignore new touch starts until the pinch fully ends
     const pos = touchPos(e);
-    if (paintMode) { if (!colorAdjustMode) routePaintClick(pos); } else startDraw(pos);
+    if (paintMode) {
+      pendingPaintPos = pos;
+      pendingPaintTimer = setTimeout(firePendingPaintStart, PAINT_TOUCH_START_DELAY_MS);
+    } else {
+      startDraw(pos);
+    }
   }, { passive: false });
   overlay.addEventListener('touchmove', e => {
     e.preventDefault();
     if (paintMode && pinchActive && e.touches.length >= 2) { updatePinch(e.touches); return; }
+    if (paintMode && pendingPaintTimer !== null) {
+      pendingPaintPos = touchPos(e); // keep the pending start position current if the finger drifts during the delay
+      return;
+    }
     if (!isDrawing && !isPainting) return;
     const pos = touchPos(e);
     if (paintMode) movePaint(pos); else moveDraw(pos);
@@ -3562,9 +3599,17 @@ function buildGIF(w, h, frames, delayCs) {
   overlay.addEventListener('touchend', e => {
     e.preventDefault();
     if (pinchActive) { if (e.touches.length < 2) pinchActive = false; return; }
+    if (paintMode && pendingPaintTimer !== null) {
+      // The finger lifted before the delay elapsed (and before a second
+      // finger ever arrived) — a genuine quick tap, not a pinch. Commit it
+      // now instead of waiting out the rest of the delay for no reason.
+      firePendingPaintStart();
+      endPaint();
+      return;
+    }
     if (paintMode) endPaint(); else endDraw();
   }, { passive: false });
-  overlay.addEventListener('touchcancel', () => { pinchActive = false; });
+  overlay.addEventListener('touchcancel', () => { pinchActive = false; cancelPendingPaintStart(); });
 
   // ── Paint view pan/zoom (test) ───────────────────────────────────────────
   // Purely a CSS transform on #paintViewport (the wrapper around mainCanvas
