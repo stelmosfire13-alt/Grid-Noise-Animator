@@ -187,7 +187,7 @@
       background: #000;
       border: 1px solid var(--border);
       border-radius: 10px;
-      overflow: auto;
+      overflow: hidden;
       display: flex; align-items: center; justify-content: center;
       width: min(100%, 62vw);
       height: clamp(200px, 55vw, 640px);
@@ -222,6 +222,12 @@
       display: none;
       white-space: nowrap;
     }
+    /* Wraps mainCanvas+regionOverlay so paint mode's pan/zoom (a CSS
+       transform on this element, applied by JS — see "Paint view pan/zoom"
+       below) moves both together as one rigid unit. Left at the exact same
+       box (100%×100% of .preview-pane) mainCanvas/regionOverlay already
+       expected, so nothing about their own sizing/positioning logic needed
+       to change — only this new wrapper's transform does the work. */
     #paintViewport {
       width: 100%; height: 100%;
       position: relative;
@@ -605,6 +611,12 @@
         <button class="btn btn-gray" id="paintModeBtn" style="width:100%;font-size:0.82rem;">🖌 Disegna</button>
       </div>
       <div id="paintControls" style="display:none;flex-direction:column;gap:8px;margin-top:6px;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--muted);">Disegna su</span>
+          <button type="button" class="btn btn-gray" id="paintTargetBaseBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🖼 Base</button>
+          <button type="button" class="btn btn-gray" id="paintTargetLayerBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🗂 Livello</button>
+          <span style="font-size:10px;color:#777;">Passa liberamente mentre lavori</span>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <input type="color" id="paintColorS" value="#000000" style="width:32px;height:28px;padding:0;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:none;">
           <div style="display:flex;align-items:center;gap:6px;">
@@ -634,6 +646,22 @@
           <button type="button" class="btn btn-gray" id="paintViewResetBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔍 Reimposta vista</button>
         </div>
         <div style="font-size:10px;color:#777;line-height:1.4;">Copia ricorda l’immagine di questa vignetta — passa a un’altra vignetta e incolla per posizionarla lì. PC: rotellina del mouse per lo zoom, trascinamento col tasto destro per spostare. Cellulare: pizzico a due dita per lo zoom, scorrimento a due dita per spostare.</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:8px;">
+          <span style="font-size:12px;color:var(--muted);font-weight:600;">Livello</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--muted);">Opacità</label>
+            <input type="range" id="layerAlphaS" min="0" max="100" value="100" style="width:90px;">
+            <em id="layerAlphaV" style="font-style:normal;font-size:12px;">100%</em>
+          </div>
+          <select id="layerBlendS" style="padding:5px 6px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+            <option value="source-over">Normale</option>
+            <option value="multiply">Moltiplica</option>
+            <option value="darken">Scurisci</option>
+            <option value="lighten">Schiarisci</option>
+          </select>
+          <button type="button" class="btn btn-gray" id="paintMergeBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">🔽 Unisci alla base</button>
+          <span style="font-size:10px;color:#777;line-height:1.4;flex-basis:100%;">Scegli se disegnare sulla base o sul livello. Opacità e metodo di fusione qui sopra si applicano a tutto il livello e possono essere modificati in seguito. «Unisci alla base» fonde il livello nell'immagine (dopo l'unione la gomma non può più rimuoverlo.)</span>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <textarea id="paintTextS" placeholder="Inserisci testo (a capo consentiti)" maxlength="100" rows="2" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:inherit;resize:vertical;"></textarea>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;color:var(--muted);">
@@ -1352,8 +1380,11 @@ function buildGIF(w, h, frames, delayCs) {
   let loadedImg = null, loadedName = '';
   let orientRotation = 0;
   let orientFlipH = false, orientFlipV = false;
+  let baseAccum = null;
   let paintAccum = null;
   let orientHistory = [];
+  let layerOpacity = 1;
+  let layerBlend = 'source-over';
 
   let animId      = null;
   let playing     = false;
@@ -1547,7 +1578,8 @@ function buildGIF(w, h, frames, delayCs) {
     stopAll();
     if (paintMode) paintModeBtn.click();
     orientRotation = 0; orientFlipH = false; orientFlipV = false;
-    orientHistory = []; paintAccum = null;
+    orientHistory = []; paintAccum = null; baseAccum = null;
+    layerOpacity = 1; layerBlend = 'source-over';
     adjCancelSession();
     if (file.type.startsWith('video/')) loadVideoFile(file);
     else loadImageFile(file);
@@ -1624,31 +1656,39 @@ function buildGIF(w, h, frames, delayCs) {
       orientRotation === 0 && !orientFlipH && !orientFlipV;
   }
 
-  function rotatePaintAccumBy90(clockwise) {
-    if (!paintAccum) return;
-    const oldW = paintAccum.width, oldH = paintAccum.height;
+  function rotateAccumCanvas90(src, clockwise) {
+    if (!src) return null;
+    const oldW = src.width, oldH = src.height;
     const rotated = document.createElement('canvas');
     rotated.width = oldH; rotated.height = oldW;
     const rctx = rotated.getContext('2d');
     rctx.save();
     rctx.translate(oldH / 2, oldW / 2);
     rctx.rotate((clockwise ? 90 : -90) * Math.PI / 180);
-    rctx.drawImage(paintAccum, -oldW / 2, -oldH / 2);
+    rctx.drawImage(src, -oldW / 2, -oldH / 2);
     rctx.restore();
-    paintAccum = rotated;
+    return rotated;
   }
-  function flipPaintAccum(horizontal) {
-    if (!paintAccum) return;
-    const w = paintAccum.width, h = paintAccum.height;
+  function flipAccumCanvas(src, horizontal) {
+    if (!src) return null;
+    const w = src.width, h = src.height;
     const flipped = document.createElement('canvas');
     flipped.width = w; flipped.height = h;
     const fctx = flipped.getContext('2d');
     fctx.save();
     fctx.translate(w / 2, h / 2);
     fctx.scale(horizontal ? -1 : 1, horizontal ? 1 : -1);
-    fctx.drawImage(paintAccum, -w / 2, -h / 2);
+    fctx.drawImage(src, -w / 2, -h / 2);
     fctx.restore();
-    paintAccum = flipped;
+    return flipped;
+  }
+  function rotatePaintAccumBy90(clockwise) {
+    baseAccum  = rotateAccumCanvas90(baseAccum, clockwise);
+    paintAccum = rotateAccumCanvas90(paintAccum, clockwise);
+  }
+  function flipPaintAccum(horizontal) {
+    baseAccum  = flipAccumCanvas(baseAccum, horizontal);
+    paintAccum = flipAccumCanvas(paintAccum, horizontal);
   }
 
   function rotateRegionPolygonsBy90(clockwise, oldW, oldH) {
@@ -1774,11 +1814,20 @@ function buildGIF(w, h, frames, delayCs) {
     pristineCanvas.width = w; pristineCanvas.height = h;
     pristineCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
 
+    if (!baseAccum || baseAccum.width !== w || baseAccum.height !== h) {
+      baseAccum = document.createElement('canvas');
+      baseAccum.width = w; baseAccum.height = h;
+    }
     if (!paintAccum || paintAccum.width !== w || paintAccum.height !== h) {
       paintAccum = document.createElement('canvas');
       paintAccum.width = w; paintAccum.height = h;
     }
+    oc.drawImage(baseAccum, 0, 0); // 下絵 strokes: part of the base, 100% / normal
+    oc.globalAlpha = layerOpacity;
+    oc.globalCompositeOperation = layerBlend;
     oc.drawImage(paintAccum, 0, 0);
+    oc.globalAlpha = 1;
+    oc.globalCompositeOperation = 'source-over';
 
     undoStack = [];
     paintUndoBtn.disabled = true;
@@ -1821,6 +1870,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (origCanvas) origImageData = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH);
     document.getElementById('regionControls').style.display = 'flex';
     syncOverlaySize();
+    if (typeof syncLayerUI === 'function') { syncLayerUI(); updateLayerUIState(); }
   }
 
   // ── Video export: per-frame source refresh ─────────────────────────────
@@ -1848,7 +1898,14 @@ function buildGIF(w, h, frames, delayCs) {
     const dw = rotated ? h : w, dh = rotated ? w : h;
     oc.drawImage(loadedVideo, -dw / 2, -dh / 2, dw, dh);
     oc.restore();
-    if (paintAccum) oc.drawImage(paintAccum, 0, 0);
+    if (baseAccum) oc.drawImage(baseAccum, 0, 0);
+    if (paintAccum) {
+      oc.globalAlpha = layerOpacity;
+      oc.globalCompositeOperation = layerBlend;
+      oc.drawImage(paintAccum, 0, 0);
+      oc.globalAlpha = 1;
+      oc.globalCompositeOperation = 'source-over';
+    }
     const pixels = oc.getImageData(0, 0, w, h).data;
     hslBuf = computeHslBuf(pixels, w, h);
     origImageData = new ImageData(pixels, w, h);
@@ -3367,6 +3424,12 @@ function buildGIF(w, h, frames, delayCs) {
   const paintAlphaS    = document.getElementById('paintAlphaS');
   const paintAlphaV    = document.getElementById('paintAlphaV');
   const paintBlendS    = document.getElementById('paintBlendS');
+  const layerAlphaS    = document.getElementById('layerAlphaS');
+  const layerAlphaV    = document.getElementById('layerAlphaV');
+  const layerBlendS    = document.getElementById('layerBlendS');
+  const paintMergeBtn  = document.getElementById('paintMergeBtn');
+  const paintTargetBaseBtn  = document.getElementById('paintTargetBaseBtn');
+  const paintTargetLayerBtn = document.getElementById('paintTargetLayerBtn');
   const paintEraserBtn   = document.getElementById('paintEraserBtn');
   const paintEyedropBtn  = document.getElementById('paintEyedropBtn');
   const paintFillBtn     = document.getElementById('paintFillBtn');
@@ -3394,6 +3457,7 @@ function buildGIF(w, h, frames, delayCs) {
   const _pmOff = '🖌 Disegna';
   const _pmOn  = '🖌 Disegno in corso…';
   let paintMode = false, isPainting = false, paintLast = null, paintEraser = false;
+  let paintTarget = 'layer'; // 'layer' → strokes go on paintAccum; 'base' → on baseAccum (the 下絵)
   let paintTool = 'brush';
   const _eraserOff = 'Gomma';
   const _eraserOn  = '✓ Gomma';
@@ -3404,26 +3468,117 @@ function buildGIF(w, h, frames, delayCs) {
   let panelClipboard = null;
 
   function snapshotForUndo() {
-    const snap = document.createElement('canvas');
-    snap.width = imgW; snap.height = imgH;
-    snap.getContext('2d').drawImage(origCanvas, 0, 0);
-    const paintSnap = document.createElement('canvas');
-    paintSnap.width = imgW; paintSnap.height = imgH;
-    if (paintAccum) paintSnap.getContext('2d').drawImage(paintAccum, 0, 0);
-    undoStack.push({ orig: snap, paint: paintSnap });
+    const snap = src => {
+      const c = document.createElement('canvas');
+      c.width = imgW; c.height = imgH;
+      if (src) c.getContext('2d').drawImage(src, 0, 0);
+      return c;
+    };
+    undoStack.push({ base: snap(pristineCanvas), baseA: snap(baseAccum), paint: snap(paintAccum), lop: layerOpacity, lbl: layerBlend });
     if (undoStack.length > MAX_UNDO) undoStack.shift();
     paintUndoBtn.disabled = false;
   }
 
-  function accumulatePaintFromMask(maskCanvas) {
-    if (!paintAccum) { paintAccum = document.createElement('canvas'); paintAccum.width = imgW; paintAccum.height = imgH; }
-    const tmp = document.createElement('canvas');
-    tmp.width = imgW; tmp.height = imgH;
-    const tctx = tmp.getContext('2d');
-    tctx.drawImage(origCanvas, 0, 0);
-    tctx.globalCompositeOperation = 'destination-in';
-    tctx.drawImage(maskCanvas, 0, 0);
-    paintAccum.getContext('2d').drawImage(tmp, 0, 0);
+  function ensureAccum(which) {
+    let c = (which === 'base') ? baseAccum : paintAccum;
+    if (!c) { c = document.createElement('canvas'); c.width = imgW; c.height = imgH; }
+    if (c.width !== imgW || c.height !== imgH) { c.width = imgW; c.height = imgH; }
+    if (which === 'base') baseAccum = c; else paintAccum = c;
+    return c;
+  }
+  function ensurePaintAccum() { return ensureAccum('layer'); }
+
+  function accumIsEmpty(c) {
+    if (!c) return true;
+    const d = c.getContext('2d').getImageData(0, 0, imgW, imgH).data;
+    for (let i = 3; i < d.length; i += 4) if (d[i] !== 0) return false;
+    return true;
+  }
+  function layerIsEmpty() { return accumIsEmpty(paintAccum); }
+  function nothingPainted() { return accumIsEmpty(paintAccum) && accumIsEmpty(baseAccum); }
+
+  function syncLayerUI() {
+    layerAlphaS.value = Math.round(layerOpacity * 100);
+    layerAlphaV.textContent = layerAlphaS.value + '%';
+    layerBlendS.value = layerBlend;
+  }
+  function syncPaintTargetUI() {
+    const onBase = paintTarget === 'base';
+    paintTargetBaseBtn.style.color  = onBase ? 'var(--accent)' : '';
+    paintTargetLayerBtn.style.color = onBase ? '' : 'var(--accent)';
+  }
+  function updateLayerUIState() {
+    paintMergeBtn.disabled = colorAdjustMode || nothingPainted();
+  }
+
+  function commitStroke() {
+    const c = ensureAccum(paintTarget);
+    const cx2 = c.getContext('2d');
+    cx2.globalAlpha = paintAlpha();
+    cx2.globalCompositeOperation = paintEraser ? 'destination-out' : paintBlendS.value;
+    cx2.drawImage(strokeLayerCanvas, 0, 0);
+    cx2.globalAlpha = 1;
+    cx2.globalCompositeOperation = 'source-over';
+  }
+
+  function rebuildOrig() {
+    if (!origCanvas || !pristineCanvas) return;
+    const oc2 = origCanvas.getContext('2d');
+    oc2.clearRect(0, 0, imgW, imgH);
+    oc2.drawImage(pristineCanvas, 0, 0);
+    if (baseAccum) oc2.drawImage(baseAccum, 0, 0);
+    if (paintAccum) {
+      oc2.globalAlpha = layerOpacity;
+      oc2.globalCompositeOperation = layerBlend;
+      oc2.drawImage(paintAccum, 0, 0);
+      oc2.globalAlpha = 1;
+      oc2.globalCompositeOperation = 'source-over';
+    }
+    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose();
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    drawOriginal();
+    computeImageStats();
+    updateMLResistance();
+    updateLayerUIState();
+  }
+
+  let previewBaseAccumCanvas = null, previewLayerCanvas = null;
+  function ensurePreviewCanvases() {
+    if (!previewBaseAccumCanvas) previewBaseAccumCanvas = document.createElement('canvas');
+    if (!previewLayerCanvas) previewLayerCanvas = document.createElement('canvas');
+    for (const c of [previewBaseAccumCanvas, previewLayerCanvas]) {
+      if (c.width !== imgW || c.height !== imgH) { c.width = imgW; c.height = imgH; }
+    }
+  }
+  function compositeLayerPreview(withStroke) {
+    if (!pristineCanvas) return;
+    ensurePreviewCanvases();
+    const applyStroke = (g) => {
+      g.globalAlpha = paintAlpha();
+      g.globalCompositeOperation = paintEraser ? 'destination-out' : paintBlendS.value;
+      g.drawImage(strokeLayerCanvas, 0, 0);
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'source-over';
+    };
+    const ba = previewBaseAccumCanvas.getContext('2d');
+    ba.clearRect(0, 0, imgW, imgH);
+    if (baseAccum) ba.drawImage(baseAccum, 0, 0);
+    if (withStroke && strokeLayerCanvas && paintTarget === 'base') applyStroke(ba);
+
+    const lg = previewLayerCanvas.getContext('2d');
+    lg.clearRect(0, 0, imgW, imgH);
+    if (paintAccum) lg.drawImage(paintAccum, 0, 0);
+    if (withStroke && strokeLayerCanvas && paintTarget === 'layer') applyStroke(lg);
+
+    ctx.clearRect(0, 0, imgW, imgH);
+    ctx.drawImage(pristineCanvas, 0, 0);
+    ctx.drawImage(previewBaseAccumCanvas, 0, 0);
+    ctx.globalAlpha = layerOpacity;
+    ctx.globalCompositeOperation = layerBlend;
+    ctx.drawImage(previewLayerCanvas, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   function adjFactorForContrast(v) {
@@ -3468,15 +3623,6 @@ function buildGIF(w, h, frames, delayCs) {
     ctx.putImageData(out, 0, 0);
   }
 
-  function fullCanvasMask() {
-    const m = document.createElement('canvas');
-    m.width = imgW; m.height = imgH;
-    const mctx = m.getContext('2d');
-    mctx.fillStyle = '#000';
-    mctx.fillRect(0, 0, imgW, imgH);
-    return m;
-  }
-
   function fmtSigned(v) { return (v > 0 ? '+' : '') + v; }
 
   function adjResetSlidersToZero() {
@@ -3493,7 +3639,9 @@ function buildGIF(w, h, frames, delayCs) {
 
   function setAdjustToolsDisabled(disabled) {
     [paintColorS, paintSizeS, paintAlphaS, paintBlendS, paintEraserBtn, paintEyedropBtn, paintFillBtn,
-     paintTextS, paintVerticalChk, paintTextModeBtn, paintClearBtn, paintSaveBtn, paintCopyBtn].forEach(el => { el.disabled = disabled; });
+     paintTextS, paintVerticalChk, paintTextModeBtn, paintClearBtn, paintSaveBtn, paintCopyBtn,
+     layerAlphaS, layerBlendS, paintTargetBaseBtn, paintTargetLayerBtn].forEach(el => { el.disabled = disabled; });
+    paintMergeBtn.disabled = disabled || nothingPainted();
     ['rotateLeftBtn', 'rotateRightBtn', 'flipHBtn', 'flipVBtn'].forEach(id => { document.getElementById(id).disabled = disabled; });
     paintUndoBtn.disabled = disabled || undoStack.length === 0;
   paintPasteBtn.disabled = disabled || !panelClipboard;
@@ -3543,12 +3691,20 @@ function buildGIF(w, h, frames, delayCs) {
       const out = oc2.createImageData(imgW, imgH);
       applyAdjustment(src.data, out.data, v.brightness, v.contrastFactor, v.r, v.g, v.b);
       oc2.putImageData(out, 0, 0);
-      accumulatePaintFromMask(fullCanvasMask());
+      ensurePaintAccum();
+      if (baseAccum) baseAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
+      const pac = paintAccum.getContext('2d');
+      pac.globalAlpha = 1;
+      pac.globalCompositeOperation = 'source-over';
+      pac.clearRect(0, 0, imgW, imgH);
+      pac.drawImage(origCanvas, 0, 0);
+      layerOpacity = 1; layerBlend = 'source-over'; syncLayerUI();
       hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
       if (detailChk.checked) decompose();
       origImageData = oc2.getImageData(0, 0, imgW, imgH);
       computeImageStats();
       updateMLResistance();
+      updateLayerUIState();
     }
     adjCloseSessionUI();
     drawOriginal();
@@ -3556,25 +3712,6 @@ function buildGIF(w, h, frames, delayCs) {
 
   function paintStrokeColor() { return paintEraser ? '#ffffff' : paintColorS.value; }
   function paintAlpha() { return (+paintAlphaS.value || 100) / 100; }
-
-  function refreshRegion(x, y, w, h) {
-    const rx = Math.max(0, Math.floor(x));
-    const ry = Math.max(0, Math.floor(y));
-    const rw = Math.min(imgW, Math.ceil(x + w)) - rx;
-    const rh = Math.min(imgH, Math.ceil(y + h)) - ry;
-    if (rw <= 0 || rh <= 0) return;
-    const oc2 = origCanvas.getContext('2d');
-    const pixels = oc2.getImageData(rx, ry, rw, rh).data;
-    for (let ly = 0; ly < rh; ly++) {
-      for (let lx = 0; lx < rw; lx++) {
-        const li = (ly * rw + lx) * 4;
-        const [hv, sv, lv] = rgbToHsl(pixels[li] / 255, pixels[li + 1] / 255, pixels[li + 2] / 255);
-        const gi = ((ry + ly) * imgW + (rx + lx)) * 3;
-        hslBuf[gi] = hv; hslBuf[gi + 1] = sv; hslBuf[gi + 2] = lv;
-      }
-    }
-    drawOriginal();
-  }
 
   function refreshPaintedRegion(x0, y0, x1, y1) {
     const pad = Math.ceil((+paintSizeS.value || 6) / 2) + 2;
@@ -3592,12 +3729,7 @@ function buildGIF(w, h, frames, delayCs) {
   }
 
   function previewStroke() {
-    ctx.drawImage(origCanvas, 0, 0);
-    ctx.globalAlpha = paintAlpha();
-    ctx.globalCompositeOperation = paintBlendS.value;
-    ctx.drawImage(strokeLayerCanvas, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
+    compositeLayerPreview(true);
   }
 
   function startPaint(pos) {
@@ -3632,19 +3764,8 @@ function buildGIF(w, h, frames, delayCs) {
     isPainting = false;
     paintLast = null;
     snapshotForUndo();
-    const oc2 = origCanvas.getContext('2d');
-    oc2.globalAlpha = paintAlpha();
-    oc2.globalCompositeOperation = paintBlendS.value;
-    oc2.drawImage(strokeLayerCanvas, 0, 0);
-    oc2.globalAlpha = 1;
-    oc2.globalCompositeOperation = 'source-over';
-    accumulatePaintFromMask(strokeLayerCanvas);
-    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
-    if (detailChk.checked) decompose();
-    drawOriginal();
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    computeImageStats();
-    updateMLResistance();
+    commitStroke();
+    rebuildOrig();
   }
 
   const VERTICAL_ROTATE_CHARS = new Set(['ー', '〜', '~', '−', '‐']);
@@ -3696,27 +3817,15 @@ function buildGIF(w, h, frames, delayCs) {
     const text = paintTextS.value;
     if (!text) return;
     snapshotForUndo();
-    const oc2 = origCanvas.getContext('2d');
     const fontSize = Math.max(8, (+paintSizeS.value || 6) * 4);
     const vertical = paintVerticalChk.checked;
     ensureStrokeLayer();
-    const maskCtx = strokeLayerCanvas.getContext('2d');
-    maskCtx.clearRect(0, 0, imgW, imgH);
-    maskCtx.fillStyle = '#000';
-    drawStampedText(maskCtx, text, pos.x, pos.y, fontSize, vertical);
-    oc2.globalAlpha = paintAlpha();
-    oc2.globalCompositeOperation = paintBlendS.value;
-    oc2.fillStyle = paintStrokeColor();
-    const box = drawStampedText(oc2, text, pos.x, pos.y, fontSize, vertical);
-    oc2.globalAlpha = 1;
-    oc2.globalCompositeOperation = 'source-over';
-    accumulatePaintFromMask(strokeLayerCanvas);
-    const pad = 4;
-    if (detailChk.checked) decompose();
-    refreshRegion(box.boxX - pad, box.boxY - pad, box.boxW + pad * 2, box.boxH + pad * 2);
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    computeImageStats();
-    updateMLResistance();
+    const slc = strokeLayerCanvas.getContext('2d');
+    slc.clearRect(0, 0, imgW, imgH);
+    slc.fillStyle = paintStrokeColor();
+    drawStampedText(slc, text, pos.x, pos.y, fontSize, vertical);
+    commitStroke();
+    rebuildOrig();
   }
   function routePaintClick(pos) {
     if (paintTool === 'text') stampText(pos);
@@ -3791,18 +3900,8 @@ function buildGIF(w, h, frames, delayCs) {
     }
     slc.putImageData(fillData, 0, 0);
     snapshotForUndo();
-    oc2.globalAlpha = paintAlpha();
-    oc2.globalCompositeOperation = paintBlendS.value;
-    oc2.drawImage(strokeLayerCanvas, 0, 0);
-    oc2.globalAlpha = 1;
-    oc2.globalCompositeOperation = 'source-over';
-    accumulatePaintFromMask(strokeLayerCanvas);
-    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
-    if (detailChk.checked) decompose();
-    drawOriginal();
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    computeImageStats();
-    updateMLResistance();
+    commitStroke();
+    rebuildOrig();
   }
 
   function updatePaintToolButtons() {
@@ -3826,6 +3925,61 @@ function buildGIF(w, h, frames, delayCs) {
   });
   paintAlphaS.addEventListener('input', () => { paintAlphaV.textContent = paintAlphaS.value + '%'; });
 
+  layerAlphaS.addEventListener('input', () => {
+    layerOpacity = (+layerAlphaS.value || 0) / 100;
+    layerAlphaV.textContent = layerAlphaS.value + '%';
+    if (paintMode && !isPainting) compositeLayerPreview(false);
+  });
+  layerAlphaS.addEventListener('change', () => {
+    layerOpacity = (+layerAlphaS.value || 0) / 100;
+    layerAlphaV.textContent = layerAlphaS.value + '%';
+    if (paintMode) rebuildOrig();
+  });
+  layerBlendS.addEventListener('change', () => {
+    layerBlend = layerBlendS.value;
+    if (paintMode) rebuildOrig();
+  });
+
+  function setPaintTarget(t) {
+    paintTarget = t;
+    syncPaintTargetUI();
+    setStatus(t === 'base' ? 'Destinazione disegno: Base' : 'Destinazione disegno: Livello');
+  }
+  paintTargetBaseBtn.addEventListener('click', () => setPaintTarget('base'));
+  paintTargetLayerBtn.addEventListener('click', () => setPaintTarget('layer'));
+
+  paintMergeBtn.addEventListener('click', () => {
+    if (!origCanvas || !pristineCanvas || colorAdjustMode) return;
+    if (nothingPainted()) { setStatus('Non è stato disegnato nulla'); return; }
+    if (isPainting) endPaint();
+    rebuildOrig(); // make sure origCanvas reflects both buffers + layer opacity/blend
+    const mergeUndo = {
+      kind: 'merge',
+      loadedImg, loadedVideo, loadedName, videoDuration,
+      orientRotation, orientFlipH, orientFlipV,
+      orientHistory: orientHistory.slice(),
+      baseA: cloneCanvasEl(baseAccum),
+      paint: cloneCanvasEl(paintAccum),
+      lop: layerOpacity, lbl: layerBlend,
+      regionPolygons: regionPolygons.map(poly => poly.map(pt => ({ ...pt }))),
+      applyInside,
+      thumbSrc: dzThumb.style.visibility !== 'hidden' ? dzThumb.src : null,
+      thumbName: dzName.textContent || '',
+    };
+    const flat = cloneCanvasEl(origCanvas);
+    loadedImg = flat;
+    loadedVideo = null;
+    orientRotation = 0; orientFlipH = false; orientFlipV = false; orientHistory = [];
+    paintAccum = null; baseAccum = null;
+    layerOpacity = 1; layerBlend = 'source-over'; syncLayerUI();
+    processImage(flat, loadedName); // clears undoStack internally
+    undoStack = [mergeUndo];
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    paintUndoBtn.disabled = undoStack.length === 0;
+    updateLayerUIState();
+    setStatus('Base e livello uniti (Annulla per ripristinare)');
+  });
+
   paintEraserBtn.addEventListener('click', () => {
     paintEraser = !paintEraser;
     paintEraserBtn.style.color = paintEraser ? 'var(--accent)' : '';
@@ -3838,35 +3992,58 @@ function buildGIF(w, h, frames, delayCs) {
 
   paintUndoBtn.addEventListener('click', () => {
     if (!undoStack.length) return;
-    const { orig: snap, paint: paintSnap } = undoStack.pop();
-    const oc2 = origCanvas.getContext('2d');
-    oc2.clearRect(0, 0, imgW, imgH);
-    oc2.drawImage(snap, 0, 0);
-    if (!paintAccum) { paintAccum = document.createElement('canvas'); paintAccum.width = imgW; paintAccum.height = imgH; }
-    paintAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
-    paintAccum.getContext('2d').drawImage(paintSnap, 0, 0);
-    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
-    if (detailChk.checked) decompose();
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    drawOriginal();
-    computeImageStats();
-    updateMLResistance();
+    const entry = undoStack.pop();
+
+    if (entry.kind === 'merge') {
+      loadedImg = entry.loadedImg;
+      loadedVideo = entry.loadedVideo;
+      loadedName = entry.loadedName;
+      videoDuration = entry.videoDuration;
+      orientRotation = entry.orientRotation;
+      orientFlipH = entry.orientFlipH;
+      orientFlipV = entry.orientFlipV;
+      orientHistory = entry.orientHistory.slice();
+      baseAccum = cloneCanvasEl(entry.baseA);
+      paintAccum = cloneCanvasEl(entry.paint);
+      layerOpacity = entry.lop; layerBlend = entry.lbl; syncLayerUI();
+      regionPolygons = entry.regionPolygons.map(poly => poly.map(pt => ({ ...pt })));
+      regionPoints = [];
+      applyInside = entry.applyInside;
+      document.getElementById('applyModeBtn').textContent = applyInside ? _rgInside : _rgOutside;
+      setVideoModeRestrictions(!!loadedVideo);
+      document.getElementById('orientControls').style.display = 'block';
+      updateOrientResetBtn();
+      reprocessWithOrientation();
+      dzThumb.src = entry.thumbSrc || '';
+      dzThumb.style.visibility = entry.thumbSrc ? 'visible' : 'hidden';
+      dzName.textContent = entry.thumbName || '';
+      paintUndoBtn.disabled = undoStack.length === 0;
+      updateLayerUIState();
+      setStatus('Unione annullata');
+      return;
+    }
+
+    const { base: baseSnap, baseA: baseASnap, paint: paintSnap, lop, lbl } = entry;
+    if (!pristineCanvas) { pristineCanvas = document.createElement('canvas'); pristineCanvas.width = imgW; pristineCanvas.height = imgH; }
+    const restore = (dst, snap) => {
+      const g = dst.getContext('2d');
+      g.clearRect(0, 0, imgW, imgH);
+      if (snap) g.drawImage(snap, 0, 0);
+    };
+    restore(pristineCanvas, baseSnap);
+    restore(ensureAccum('base'), baseASnap);
+    restore(ensureAccum('layer'), paintSnap);
+    layerOpacity = lop; layerBlend = lbl; syncLayerUI();
+    rebuildOrig();
     paintUndoBtn.disabled = undoStack.length === 0;
   });
 
   paintClearBtn.addEventListener('click', () => {
     if (!pristineCanvas || !origCanvas) return;
     snapshotForUndo();
-    const oc2 = origCanvas.getContext('2d');
-    oc2.clearRect(0, 0, imgW, imgH);
-    oc2.drawImage(pristineCanvas, 0, 0);
+    if (baseAccum) baseAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
     if (paintAccum) paintAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
-    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
-    if (detailChk.checked) decompose();
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    drawOriginal();
-    computeImageStats();
-    updateMLResistance();
+    rebuildOrig();
   });
 
   paintSaveBtn.addEventListener('click', () => {
@@ -3895,7 +4072,8 @@ function buildGIF(w, h, frames, delayCs) {
     loadedVideo = null;
     loadedName = `Immagine copiata`;
     orientRotation = 0; orientFlipH = false; orientFlipV = false; orientHistory = [];
-    paintAccum = null;
+    paintAccum = null; baseAccum = null;
+    layerOpacity = 1; layerBlend = 'source-over'; syncLayerUI();
     document.getElementById('videoModeNotice').style.display = 'none';
     setVideoModeRestrictions(false);
     document.getElementById('orientControls').style.display = 'block';
@@ -3921,6 +4099,9 @@ function buildGIF(w, h, frames, delayCs) {
       if (playing) stopPlay();
       sswChk.disabled = true; sswPeriodS.disabled = true; sswScaleS.disabled = true;
       paintControls.style.display = 'flex';
+      syncLayerUI();
+      syncPaintTargetUI();
+      updateLayerUIState();
       resetPaintView(); // start each paint session at 1:1 rather than resuming wherever the last one left off
       if (hslBuf) drawOriginal();
     } else {
@@ -3971,13 +4152,26 @@ function buildGIF(w, h, frames, delayCs) {
     return cc;
   }
 
+  function cloneUndoEntry(u) {
+    if (u.kind === 'merge') {
+      return { ...u,
+        baseA: cloneCanvasEl(u.baseA),
+        paint: cloneCanvasEl(u.paint),
+        orientHistory: u.orientHistory.slice(),
+        regionPolygons: u.regionPolygons.map(poly => poly.map(pt => ({ ...pt }))) };
+    }
+    return { base: cloneCanvasEl(u.base), baseA: cloneCanvasEl(u.baseA), paint: cloneCanvasEl(u.paint), lop: u.lop, lbl: u.lbl };
+  }
+
   function snapshotIntoPanel(index) {
     panels[index] = {
       loadedImg, loadedVideo, loadedName, videoDuration,
       orientRotation, orientFlipH, orientFlipV,
       orientHistory: orientHistory.slice(),
+      baseAccum: cloneCanvasEl(baseAccum),
       paintAccum: cloneCanvasEl(paintAccum),
-      undoStack: undoStack.map(u => ({ orig: cloneCanvasEl(u.orig), paint: cloneCanvasEl(u.paint) })),
+      layerOpacity, layerBlend,
+      undoStack: undoStack.map(cloneUndoEntry),
       regionPolygons: regionPolygons.map(poly => poly.map(pt => ({ ...pt }))),
       applyInside,
       thumbSrc: dzThumb.style.visibility !== 'hidden' ? dzThumb.src : null,
@@ -3991,7 +4185,8 @@ function buildGIF(w, h, frames, delayCs) {
     stopAll();
     if (!p) {
       orientRotation = 0; orientFlipH = false; orientFlipV = false; orientHistory = [];
-      paintAccum = null;
+      paintAccum = null; baseAccum = null;
+      layerOpacity = 1; layerBlend = 'source-over';
       undoStack = [];
       regionPoints = []; regionPolygons = []; regionMask = null; applyInside = false;
       document.getElementById('applyModeBtn').textContent = _rgOutside;
@@ -4008,7 +4203,10 @@ function buildGIF(w, h, frames, delayCs) {
       orientFlipH = p.orientFlipH;
       orientFlipV = p.orientFlipV;
       orientHistory = p.orientHistory.slice();
+      baseAccum = cloneCanvasEl(p.baseAccum);
       paintAccum = cloneCanvasEl(p.paintAccum);
+      layerOpacity = (p.layerOpacity != null) ? p.layerOpacity : 1;
+      layerBlend = p.layerBlend || 'source-over';
       regionPolygons = p.regionPolygons.map(poly => poly.map(pt => ({ ...pt })));
       regionPoints = [];
       applyInside = p.applyInside;
@@ -4017,7 +4215,7 @@ function buildGIF(w, h, frames, delayCs) {
       document.getElementById('orientControls').style.display = 'block';
       updateOrientResetBtn();
       reprocessWithOrientation();
-      undoStack = p.undoStack.map(u => ({ orig: cloneCanvasEl(u.orig), paint: cloneCanvasEl(u.paint) }));
+      undoStack = p.undoStack.map(cloneUndoEntry);
       paintUndoBtn.disabled = undoStack.length === 0;
       dzThumb.src = p.thumbSrc || '';
       dzThumb.style.visibility = p.thumbSrc ? 'visible' : 'hidden';

@@ -224,7 +224,7 @@
       background: #000;
       border: 1px solid var(--border);
       border-radius: 10px;
-      overflow: auto;
+      overflow: hidden;
       display: flex; align-items: center; justify-content: center;
       width: min(100%, 62vw);
       height: clamp(200px, 55vw, 640px);
@@ -259,6 +259,12 @@
       display: none;
       white-space: nowrap;
     }
+    /* Wraps mainCanvas+regionOverlay so paint mode's pan/zoom (a CSS
+       transform on this element, applied by JS — see "Paint view pan/zoom"
+       below) moves both together as one rigid unit. Left at the exact same
+       box (100%×100% of .preview-pane) mainCanvas/regionOverlay already
+       expected, so nothing about their own sizing/positioning logic needed
+       to change — only this new wrapper's transform does the work. */
     #paintViewport {
       width: 100%; height: 100%;
       position: relative;
@@ -703,6 +709,12 @@
         <button class="btn btn-gray" id="paintModeBtn" style="width:100%;font-size:0.82rem;">🖌 お絵描き</button>
       </div>
       <div id="paintControls" style="display:none;flex-direction:column;gap:8px;margin-top:6px;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--muted);">描画先</span>
+          <button type="button" class="btn btn-gray" id="paintTargetBaseBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🖼 下絵</button>
+          <button type="button" class="btn btn-gray" id="paintTargetLayerBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🗂 レイヤー</button>
+          <span style="font-size:10px;color:#777;">切り替えて行き来しながら描けます</span>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <input type="color" id="paintColorS" value="#000000" style="width:32px;height:28px;padding:0;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:none;">
           <div style="display:flex;align-items:center;gap:6px;">
@@ -732,6 +744,22 @@
           <button type="button" class="btn btn-gray" id="paintViewResetBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔍 表示リセット</button>
         </div>
         <div style="font-size:10px;color:#777;line-height:1.4;">コピーで今のコマの絵を記憶し、別のコマに切り替えてからペーストすると貼り付けられます。PC: マウスホイールで拡大縮小、右クリックドラッグで移動。スマホ: 2本指ピンチで拡大縮小、2本指スライドで移動。</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:8px;">
+          <span style="font-size:12px;color:var(--muted);font-weight:600;">レイヤー</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--muted);">不透明度</label>
+            <input type="range" id="layerAlphaS" min="0" max="100" value="100" style="width:90px;">
+            <em id="layerAlphaV" style="font-style:normal;font-size:12px;">100%</em>
+          </div>
+          <select id="layerBlendS" style="padding:5px 6px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+            <option value="source-over">通常</option>
+            <option value="multiply">乗算</option>
+            <option value="darken">暗い色優先</option>
+            <option value="lighten">明るい色優先</option>
+          </select>
+          <button type="button" class="btn btn-gray" id="paintMergeBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">🔽 下絵と統合</button>
+          <span style="font-size:10px;color:#777;line-height:1.4;flex-basis:100%;">お絵描き場所は下絵またはレイヤーが選択できます。上の不透明度・描画モードはレイヤー全体にかかり、あとから変更できます。「下絵と統合」でレイヤーを絵に焼き込みます(統合すると消しゴムで消せなくなります。)</span>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <textarea id="paintTextS" placeholder="テキストを入力（改行可）" maxlength="100" rows="2" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:inherit;resize:vertical;"></textarea>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;color:var(--muted);">
@@ -1609,8 +1637,21 @@ function buildGIF(w, h, frames, delayCs) {
   let loadedVideo = null;  // <video> element when a video file was loaded instead of an image
   let orientRotation = 0;      // 0, 90, 180, 270 (clockwise)
   let orientFlipH = false, orientFlipV = false;
-  let paintAccum = null;   // persistent transparent layer holding just the user's paint (composited on top of the base image in processImage()), kept rotated/flipped in sync with the current orientation so rotate/flip preserve it
-  let orientHistory = [];  // sequence of individual orientation ops applied since upload — paintAccum has no pristine source to replay from (unlike loadedImg), so "reset" inverts it by literally undoing each step in reverse
+  // Two persistent transparent stroke buffers, both kept rotated/flipped in
+  // sync with the current orientation so rotate/flip preserve everything
+  // painted (they have no pristine source to replay from, unlike loadedImg):
+  //   baseAccum  — strokes drawn on the 下絵. Composited at 100% / normal, so
+  //                it reads as part of the base image itself.
+  //   paintAccum — strokes drawn on the レイヤー. Composited at the layer's
+  //                own opacity + blend (layerOpacity/layerBlend), adjustable
+  //                at any time. "下絵と統合" bakes both down into loadedImg.
+  // Stack order (bottom→top): pristineCanvas → baseAccum → paintAccum.
+  // paintTarget picks which buffer the next stroke lands on.
+  let baseAccum = null;
+  let paintAccum = null;
+  let orientHistory = [];  // sequence of individual orientation ops applied since upload — the accum buffers have no pristine source to replay from (unlike loadedImg), so "reset" inverts it by literally undoing each step in reverse
+  let layerOpacity = 1;             // 0..1
+  let layerBlend = 'source-over';   // 'source-over' | 'multiply' | 'darken' | 'lighten'
 
   let animId      = null;
   let playing     = false;
@@ -2020,7 +2061,8 @@ function buildGIF(w, h, frames, delayCs) {
     stopAll();
     if (paintMode) paintModeBtn.click(); // a real upload should land in the normal view, not the blank-canvas paint mode
     orientRotation = 0; orientFlipH = false; orientFlipV = false;
-    orientHistory = []; paintAccum = null;
+    orientHistory = []; paintAccum = null; baseAccum = null;
+    layerOpacity = 1; layerBlend = 'source-over';
     adjCancelSession();
     if (file.type.startsWith('video/')) loadVideoFile(file);
     else loadImageFile(file);
@@ -2103,35 +2145,43 @@ function buildGIF(w, h, frames, delayCs) {
       orientRotation === 0 && !orientFlipH && !orientFlipV;
   }
 
-  // Rotates the persistent paint layer by exactly one button-click's worth
+  // Rotates a persistent stroke buffer by exactly one button-click's worth
   // (±90°) so it stays lined up with the base image after processImage()
-  // redraws that image at the new orientation. A no-op while paintAccum is
-  // still null (nothing painted yet).
-  function rotatePaintAccumBy90(clockwise) {
-    if (!paintAccum) return;
-    const oldW = paintAccum.width, oldH = paintAccum.height;
+  // redraws that image at the new orientation. Returns null unchanged.
+  function rotateAccumCanvas90(src, clockwise) {
+    if (!src) return null;
+    const oldW = src.width, oldH = src.height;
     const rotated = document.createElement('canvas');
     rotated.width = oldH; rotated.height = oldW;
     const rctx = rotated.getContext('2d');
     rctx.save();
     rctx.translate(oldH / 2, oldW / 2);
     rctx.rotate((clockwise ? 90 : -90) * Math.PI / 180);
-    rctx.drawImage(paintAccum, -oldW / 2, -oldH / 2);
+    rctx.drawImage(src, -oldW / 2, -oldH / 2);
     rctx.restore();
-    paintAccum = rotated;
+    return rotated;
   }
-  function flipPaintAccum(horizontal) {
-    if (!paintAccum) return;
-    const w = paintAccum.width, h = paintAccum.height;
+  function flipAccumCanvas(src, horizontal) {
+    if (!src) return null;
+    const w = src.width, h = src.height;
     const flipped = document.createElement('canvas');
     flipped.width = w; flipped.height = h;
     const fctx = flipped.getContext('2d');
     fctx.save();
     fctx.translate(w / 2, h / 2);
     fctx.scale(horizontal ? -1 : 1, horizontal ? 1 : -1);
-    fctx.drawImage(paintAccum, -w / 2, -h / 2);
+    fctx.drawImage(src, -w / 2, -h / 2);
     fctx.restore();
-    paintAccum = flipped;
+    return flipped;
+  }
+  // Keep both the 下絵 buffer and the レイヤー buffer aligned with the image.
+  function rotatePaintAccumBy90(clockwise) {
+    baseAccum  = rotateAccumCanvas90(baseAccum, clockwise);
+    paintAccum = rotateAccumCanvas90(paintAccum, clockwise);
+  }
+  function flipPaintAccum(horizontal) {
+    baseAccum  = flipAccumCanvas(baseAccum, horizontal);
+    paintAccum = flipAccumCanvas(paintAccum, horizontal);
   }
 
   // Region-selection polygons (used by the noise-side 外側/内側に適用
@@ -2298,23 +2348,31 @@ function buildGIF(w, h, frames, delayCs) {
     oc.restore();
 
     // Snapshot for the paint tool's "clear my drawing" button (see below) —
-    // captured BEFORE paintAccum goes back on, so it always represents the
-    // oriented base image with no paint on it.
+    // captured BEFORE either stroke buffer goes back on, so it always
+    // represents the oriented base image with NO paint on it at all.
     pristineCanvas = document.createElement('canvas');
     pristineCanvas.width = w; pristineCanvas.height = h;
     pristineCanvas.getContext('2d').drawImage(origCanvas, 0, 0);
 
-    // Re-apply the user's accumulated paint on top of the freshly (re)drawn
-    // base image. The orientation buttons already rotated/flipped paintAccum
-    // in lockstep (see rotatePaintAccumBy90/flipPaintAccum above), so by the
-    // time we get here its dimensions already match w×h and this is just a
-    // plain composite — on a brand-new upload paintAccum is null/blank, so
-    // this is a no-op there.
+    // Re-apply the accumulated paint on top of the freshly (re)drawn base
+    // image. The orientation buttons already rotated/flipped both buffers in
+    // lockstep (see rotatePaintAccumBy90/flipPaintAccum above), so their
+    // dimensions already match w×h and this is just a plain composite — on a
+    // brand-new upload both are null/blank, so this is a no-op there.
+    if (!baseAccum || baseAccum.width !== w || baseAccum.height !== h) {
+      baseAccum = document.createElement('canvas');
+      baseAccum.width = w; baseAccum.height = h;
+    }
     if (!paintAccum || paintAccum.width !== w || paintAccum.height !== h) {
       paintAccum = document.createElement('canvas');
       paintAccum.width = w; paintAccum.height = h;
     }
+    oc.drawImage(baseAccum, 0, 0); // 下絵 strokes: part of the base, 100% / normal
+    oc.globalAlpha = layerOpacity;
+    oc.globalCompositeOperation = layerBlend;
     oc.drawImage(paintAccum, 0, 0);
+    oc.globalAlpha = 1;
+    oc.globalCompositeOperation = 'source-over';
 
     // A new image invalidates any pending undo history from the last one.
     undoStack = [];
@@ -2365,6 +2423,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (origCanvas) origImageData = origCanvas.getContext('2d').getImageData(0, 0, imgW, imgH);
     document.getElementById('regionControls').style.display = 'flex';
     syncOverlaySize();
+    if (typeof syncLayerUI === 'function') { syncLayerUI(); updateLayerUIState(); }
   }
 
   // ── Video export: per-frame source refresh ─────────────────────────────
@@ -2402,7 +2461,14 @@ function buildGIF(w, h, frames, delayCs) {
     const dw = rotated ? h : w, dh = rotated ? w : h;
     oc.drawImage(loadedVideo, -dw / 2, -dh / 2, dw, dh);
     oc.restore();
-    if (paintAccum) oc.drawImage(paintAccum, 0, 0);
+    if (baseAccum) oc.drawImage(baseAccum, 0, 0);
+    if (paintAccum) {
+      oc.globalAlpha = layerOpacity;
+      oc.globalCompositeOperation = layerBlend;
+      oc.drawImage(paintAccum, 0, 0);
+      oc.globalAlpha = 1;
+      oc.globalCompositeOperation = 'source-over';
+    }
     const pixels = oc.getImageData(0, 0, w, h).data;
     hslBuf = computeHslBuf(pixels, w, h);
     origImageData = new ImageData(pixels, w, h);
@@ -3413,7 +3479,7 @@ function buildGIF(w, h, frames, delayCs) {
   }, { passive: false });
   overlay.addEventListener('touchcancel', () => { pinchActive = false; cancelPendingPaintStart(); });
 
-  // ── Paint view pan/zoom ─────────────────────────────────────────────────
+  // ── Paint view pan/zoom (test) ───────────────────────────────────────────
   // Purely a CSS transform on #paintViewport (the wrapper around mainCanvas
   // + regionOverlay, see its CSS) — zooms/pans the DISPLAY only, never
   // touching imgW/imgH or origCanvas. Every existing pointer-to-image
@@ -3434,7 +3500,12 @@ function buildGIF(w, h, frames, delayCs) {
 
   // Keeps whatever content is currently under (clientX, clientY) fixed at
   // that same screen position while the zoom level changes — "zoom toward
-  // the cursor" rather than always zooming from center.
+  // the cursor" rather than always zooming from center. transform-origin is
+  // 0 0 (paintViewport's own top-left) and the transform is
+  // `translate() scale()` (composes scale-then-translate) — writing out
+  // screen-position = base + local*zoom + pan for a fixed content point
+  // before and after the zoom change and solving for the new pan cancels
+  // out `base` and `local` entirely, leaving just this.
   function zoomAt(clientX, clientY, newZoom) {
     newZoom = Math.min(PAINT_ZOOM_MAX, Math.max(PAINT_ZOOM_MIN, newZoom));
     if (newZoom === paintZoom) return;
@@ -3452,8 +3523,10 @@ function buildGIF(w, h, frames, delayCs) {
     zoomAt(e.clientX, e.clientY, paintZoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
   }, { passive: false });
 
-  // Right-click-drag pans. move/up listen on window (not overlay) so the drag
-  // keeps tracking even if the cursor slips off the canvas mid-drag.
+  // Right-click-drag pans. The browser's own context menu is suppressed only
+  // while paint mode is active — normal right-click elsewhere on the page is
+  // untouched. move/up listen on window (not overlay) so the drag keeps
+  // tracking correctly even if the cursor slips off the canvas mid-drag.
   overlay.addEventListener('contextmenu', e => { if (paintMode) e.preventDefault(); });
   let paintViewDragging = false, paintViewDragStart = null;
   overlay.addEventListener('mousedown', e => {
@@ -3470,9 +3543,14 @@ function buildGIF(w, h, frames, delayCs) {
   });
   window.addEventListener('mouseup', e => { if (e.button === 2) paintViewDragging = false; });
 
-  // Two-finger pinch-to-zoom + slide-to-pan (mobile). Per touchmove tick:
-  // re-anchor the zoom at the current midpoint, then add the midpoint's own
-  // frame-to-frame drift on top as a plain pan.
+  // Two-finger pinch-to-zoom + slide-to-pan (mobile). Handled per-frame as
+  // two independent adjustments — zoomAt() re-anchors the zoom at the
+  // CURRENT midpoint every tick (so the content under the fingers stays
+  // under the fingers as they spread/pinch), then the midpoint's own
+  // frame-to-frame drift is added on top as a plain pan. Summed over many
+  // touchmove ticks this reproduces a combined pinch+pan gesture correctly;
+  // a single calculation anchored only at the gesture's start point could
+  // not (it has no way to also account for the anchor itself sliding).
   let pinchActive = false, pinchStartDist = 0, pinchStartZoom = 1, pinchLastMid = null;
   function touchDist(t0, t1) { return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY); }
   function touchMid(t0, t1) { return { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 }; }
@@ -4174,6 +4252,12 @@ function buildGIF(w, h, frames, delayCs) {
   const paintAlphaS    = document.getElementById('paintAlphaS');
   const paintAlphaV    = document.getElementById('paintAlphaV');
   const paintBlendS    = document.getElementById('paintBlendS');
+  const layerAlphaS    = document.getElementById('layerAlphaS');
+  const layerAlphaV    = document.getElementById('layerAlphaV');
+  const layerBlendS    = document.getElementById('layerBlendS');
+  const paintMergeBtn  = document.getElementById('paintMergeBtn');
+  const paintTargetBaseBtn  = document.getElementById('paintTargetBaseBtn');
+  const paintTargetLayerBtn = document.getElementById('paintTargetLayerBtn');
   const paintEraserBtn   = document.getElementById('paintEraserBtn');
   const paintEyedropBtn  = document.getElementById('paintEyedropBtn');
   const paintFillBtn     = document.getElementById('paintFillBtn');
@@ -4203,6 +4287,7 @@ function buildGIF(w, h, frames, delayCs) {
   const _eraserOff = '消しゴム';
   const _eraserOn  = '✓ 消しゴム';
   let paintMode = false, isPainting = false, paintLast = null, paintEraser = false;
+  let paintTarget = 'layer'; // 'layer' → strokes go on paintAccum; 'base' → on baseAccum (the 下絵)
   // Which click-driven tool is active — 'brush' draws strokes (the default,
   // handled by startPaint/movePaint/endPaint below); the other three are
   // single-purpose click tools that never drag. Mutually exclusive by
@@ -4223,41 +4308,149 @@ function buildGIF(w, h, frames, delayCs) {
   // like any other upload and needs no special-casing elsewhere.
   let panelClipboard = null;
 
-  // Called right before origCanvas is about to be mutated by a committed
-  // paint action (stroke, text stamp, fill, or "clear my drawing") —
-  // captures "how it looked a moment ago" and pushes it onto undoStack so
-  // paintUndoBtn can pop snapshots off one at a time. Capped at MAX_UNDO
-  // (oldest dropped first) — the user asked for a handful of steps, not an
-  // unbounded history. Snapshots paintAccum alongside origCanvas (as a
-  // paired entry) so undo restores the persistent paint layer too — without
-  // that, undoing a stroke and then rotating would bring the "undone" paint
-  // back, since paintAccum would still have it.
+  // Called right before a committed paint action (stroke, text stamp, fill,
+  // "描画を消す", or "下絵と統合") changes the picture — captures "how it
+  // looked a moment ago" and pushes it onto undoStack so paintUndoBtn can
+  // pop snapshots off one at a time. Capped at MAX_UNDO (oldest dropped
+  // first). Each entry holds the base image (pristineCanvas — color-adjust
+  // can change it), BOTH stroke buffers (baseAccum + paintAccum), and the
+  // layer's opacity/blend (統合 resets them), so undo restores the whole
+  // state and rebuildOrig() can regenerate origCanvas + hslBuf from it.
   function snapshotForUndo() {
-    const snap = document.createElement('canvas');
-    snap.width = imgW; snap.height = imgH;
-    snap.getContext('2d').drawImage(origCanvas, 0, 0);
-    const paintSnap = document.createElement('canvas');
-    paintSnap.width = imgW; paintSnap.height = imgH;
-    if (paintAccum) paintSnap.getContext('2d').drawImage(paintAccum, 0, 0);
-    undoStack.push({ orig: snap, paint: paintSnap });
+    const snap = src => {
+      const c = document.createElement('canvas');
+      c.width = imgW; c.height = imgH;
+      if (src) c.getContext('2d').drawImage(src, 0, 0);
+      return c;
+    };
+    undoStack.push({ base: snap(pristineCanvas), baseA: snap(baseAccum), paint: snap(paintAccum), lop: layerOpacity, lbl: layerBlend });
     if (undoStack.length > MAX_UNDO) undoStack.shift();
     paintUndoBtn.disabled = false;
   }
 
-  // Copies the CURRENT origCanvas pixels into paintAccum, restricted to
-  // wherever maskCanvas (already alpha-masked to just the touched area) has
-  // nonzero alpha — capturing the actual final composited appearance
-  // (correct regardless of blend mode/opacity) rather than recomputing the
-  // blend a second time, which wouldn't match for non-'normal' blend modes.
-  function accumulatePaintFromMask(maskCanvas) {
-    if (!paintAccum) { paintAccum = document.createElement('canvas'); paintAccum.width = imgW; paintAccum.height = imgH; }
-    const tmp = document.createElement('canvas');
-    tmp.width = imgW; tmp.height = imgH;
-    const tctx = tmp.getContext('2d');
-    tctx.drawImage(origCanvas, 0, 0);
-    tctx.globalCompositeOperation = 'destination-in';
-    tctx.drawImage(maskCanvas, 0, 0);
-    paintAccum.getContext('2d').drawImage(tmp, 0, 0);
+  function ensureAccum(which) {
+    let c = (which === 'base') ? baseAccum : paintAccum;
+    if (!c) { c = document.createElement('canvas'); c.width = imgW; c.height = imgH; }
+    if (c.width !== imgW || c.height !== imgH) { c.width = imgW; c.height = imgH; }
+    if (which === 'base') baseAccum = c; else paintAccum = c;
+    return c;
+  }
+  function ensurePaintAccum() { return ensureAccum('layer'); }
+
+  function accumIsEmpty(c) {
+    if (!c) return true;
+    const d = c.getContext('2d').getImageData(0, 0, imgW, imgH).data;
+    for (let i = 3; i < d.length; i += 4) if (d[i] !== 0) return false;
+    return true;
+  }
+  function layerIsEmpty() { return accumIsEmpty(paintAccum); }
+  function nothingPainted() { return accumIsEmpty(paintAccum) && accumIsEmpty(baseAccum); }
+
+  // Pushes the layer opacity/blend state vars back out to the two controls
+  // (after 統合 / undo / panel restore / color-adjust reset them in code).
+  function syncLayerUI() {
+    layerAlphaS.value = Math.round(layerOpacity * 100);
+    layerAlphaV.textContent = layerAlphaS.value + '%';
+    layerBlendS.value = layerBlend;
+  }
+  // Highlights the active 描画先 button and reflects it in the brush cursor.
+  function syncPaintTargetUI() {
+    const onBase = paintTarget === 'base';
+    paintTargetBaseBtn.style.color  = onBase ? 'var(--accent)' : '';
+    paintTargetLayerBtn.style.color = onBase ? '' : 'var(--accent)';
+  }
+  function updateLayerUIState() {
+    paintMergeBtn.disabled = colorAdjustMode || nothingPainted();
+  }
+
+  // Composites strokeLayerCanvas (one finished brush stroke / fill / text
+  // stamp, drawn opaque in normal mode) into whichever buffer 描画先 points
+  // at, using the per-stroke 不透明度 + 描画モード — or erasing (destination-
+  // out) from that buffer when the eraser is on. Both buffers are just
+  // transparent overlays, so erasing either one reveals what's underneath.
+  // Every commit path (endPaint/doFill/stampText) funnels through here.
+  function commitStroke() {
+    const c = ensureAccum(paintTarget);
+    const cx2 = c.getContext('2d');
+    cx2.globalAlpha = paintAlpha();
+    cx2.globalCompositeOperation = paintEraser ? 'destination-out' : paintBlendS.value;
+    cx2.drawImage(strokeLayerCanvas, 0, 0);
+    cx2.globalAlpha = 1;
+    cx2.globalCompositeOperation = 'source-over';
+  }
+
+  // Single source of truth for "the picture":
+  //   origCanvas = pristineCanvas → baseAccum (100%/normal) → paintAccum (at
+  //   the layer's opacity/blend).
+  // Everything downstream (drawNoise/decompose/stats/export) reads origCanvas
+  // and needs no knowledge of the buffers. Called after any change to either
+  // buffer, the layer opacity/blend, or the base — does the full hslBuf
+  // recompute the old per-stroke commit did inline.
+  function rebuildOrig() {
+    if (!origCanvas || !pristineCanvas) return;
+    const oc2 = origCanvas.getContext('2d');
+    oc2.clearRect(0, 0, imgW, imgH);
+    oc2.drawImage(pristineCanvas, 0, 0);
+    if (baseAccum) oc2.drawImage(baseAccum, 0, 0);
+    if (paintAccum) {
+      oc2.globalAlpha = layerOpacity;
+      oc2.globalCompositeOperation = layerBlend;
+      oc2.drawImage(paintAccum, 0, 0);
+      oc2.globalAlpha = 1;
+      oc2.globalCompositeOperation = 'source-over';
+    }
+    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
+    if (detailChk.checked) decompose();
+    origImageData = oc2.getImageData(0, 0, imgW, imgH);
+    drawOriginal();
+    computeImageStats();
+    updateMLResistance();
+    updateLayerUIState();
+  }
+
+  // Live preview while a stroke is mid-drag, and for the layer opacity/blend
+  // sliders (full hslBuf recompute only happens on release, via
+  // rebuildOrig()). Builds the same stack as rebuildOrig() —
+  //   pristineCanvas → baseAccum(100%/normal) → paintAccum(layer op/blend)
+  // — with the in-progress stroke added to whichever buffer 描画先 points at
+  // (on its OWN scratch copy, so an eraser stroke removes only that buffer's
+  // pixels, not the pristine image underneath). Nothing is committed.
+  let previewBaseAccumCanvas = null, previewLayerCanvas = null;
+  function ensurePreviewCanvases() {
+    if (!previewBaseAccumCanvas) previewBaseAccumCanvas = document.createElement('canvas');
+    if (!previewLayerCanvas) previewLayerCanvas = document.createElement('canvas');
+    for (const c of [previewBaseAccumCanvas, previewLayerCanvas]) {
+      if (c.width !== imgW || c.height !== imgH) { c.width = imgW; c.height = imgH; }
+    }
+  }
+  function compositeLayerPreview(withStroke) {
+    if (!pristineCanvas) return;
+    ensurePreviewCanvases();
+    const applyStroke = (g) => {
+      g.globalAlpha = paintAlpha();
+      g.globalCompositeOperation = paintEraser ? 'destination-out' : paintBlendS.value;
+      g.drawImage(strokeLayerCanvas, 0, 0);
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'source-over';
+    };
+    const ba = previewBaseAccumCanvas.getContext('2d');
+    ba.clearRect(0, 0, imgW, imgH);
+    if (baseAccum) ba.drawImage(baseAccum, 0, 0);
+    if (withStroke && strokeLayerCanvas && paintTarget === 'base') applyStroke(ba);
+
+    const lg = previewLayerCanvas.getContext('2d');
+    lg.clearRect(0, 0, imgW, imgH);
+    if (paintAccum) lg.drawImage(paintAccum, 0, 0);
+    if (withStroke && strokeLayerCanvas && paintTarget === 'layer') applyStroke(lg);
+
+    ctx.clearRect(0, 0, imgW, imgH);
+    ctx.drawImage(pristineCanvas, 0, 0);
+    ctx.drawImage(previewBaseAccumCanvas, 0, 0);
+    ctx.globalAlpha = layerOpacity;
+    ctx.globalCompositeOperation = layerBlend;
+    ctx.drawImage(previewLayerCanvas, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   // ── Brightness/contrast/RGB tone adjustment ──────────────────────────────
@@ -4338,19 +4531,6 @@ function buildGIF(w, h, frames, delayCs) {
     ctx.putImageData(out, 0, 0);
   }
 
-  // Fully opaque canvas the size of the image — accumulatePaintFromMask()
-  // only looks at alpha, so this makes it treat "the entire image" as the
-  // touched region, which is correct here: an adjustment commit really did
-  // just touch every pixel, unlike a brush stroke or fill.
-  function fullCanvasMask() {
-    const m = document.createElement('canvas');
-    m.width = imgW; m.height = imgH;
-    const mctx = m.getContext('2d');
-    mctx.fillStyle = '#000';
-    mctx.fillRect(0, 0, imgW, imgH);
-    return m;
-  }
-
   function fmtSigned(v) { return (v > 0 ? '+' : '') + v; }
 
   function adjResetSlidersToZero() {
@@ -4376,7 +4556,9 @@ function buildGIF(w, h, frames, delayCs) {
   // of this session.
   function setAdjustToolsDisabled(disabled) {
     [paintColorS, paintSizeS, paintAlphaS, paintBlendS, paintEraserBtn, paintEyedropBtn, paintFillBtn,
-     paintTextS, paintVerticalChk, paintTextModeBtn, paintClearBtn, paintSaveBtn, paintCopyBtn].forEach(el => { el.disabled = disabled; });
+     paintTextS, paintVerticalChk, paintTextModeBtn, paintClearBtn, paintSaveBtn, paintCopyBtn,
+     layerAlphaS, layerBlendS, paintTargetBaseBtn, paintTargetLayerBtn].forEach(el => { el.disabled = disabled; });
+    paintMergeBtn.disabled = disabled || nothingPainted();
     ['rotateLeftBtn', 'rotateRightBtn', 'flipHBtn', 'flipVBtn'].forEach(id => { document.getElementById(id).disabled = disabled; });
     paintUndoBtn.disabled = disabled || undoStack.length === 0;
     paintPasteBtn.disabled = disabled || !panelClipboard;
@@ -4433,12 +4615,26 @@ function buildGIF(w, h, frames, delayCs) {
       const out = oc2.createImageData(imgW, imgH);
       applyAdjustment(src.data, out.data, v.brightness, v.contrastFactor, v.r, v.g, v.b);
       oc2.putImageData(out, 0, 0);
-      accumulatePaintFromMask(fullCanvasMask());
+      // Colour adjust applies to the whole picture (下絵 + everything painted
+      // so far, both buffers), so bake the adjusted result into the paint
+      // layer as one opaque frame — it survives rotation/panel switches that
+      // way (the accum buffers are the only persistent, orientation-synced
+      // ones) — clear the now-folded-in 下絵 buffer, and reset the layer
+      // opacity/blend so it shows 1:1.
+      ensurePaintAccum();
+      if (baseAccum) baseAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
+      const pac = paintAccum.getContext('2d');
+      pac.globalAlpha = 1;
+      pac.globalCompositeOperation = 'source-over';
+      pac.clearRect(0, 0, imgW, imgH);
+      pac.drawImage(origCanvas, 0, 0);
+      layerOpacity = 1; layerBlend = 'source-over'; syncLayerUI();
       hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
       if (detailChk.checked) decompose(); // see the comment in endPaint() above
       origImageData = oc2.getImageData(0, 0, imgW, imgH);
       computeImageStats();
       updateMLResistance();
+      updateLayerUIState();
     }
     adjCloseSessionUI();
     drawOriginal();
@@ -4447,38 +4643,16 @@ function buildGIF(w, h, frames, delayCs) {
   function paintStrokeColor() { return paintEraser ? '#ffffff' : paintColorS.value; }
   function paintAlpha() { return (+paintAlphaS.value || 100) / 100; }
 
-  // Recomputes hslBuf for a rectangular region (clamped to canvas bounds)
-  // instead of the whole image. Used by stampText (padded by the stamp's
-  // own measured bounding box) — brush strokes instead do one full-canvas
-  // recompute per stroke in endPaint(), see the scratch-layer comment above.
-  function refreshRegion(x, y, w, h) {
-    const rx = Math.max(0, Math.floor(x));
-    const ry = Math.max(0, Math.floor(y));
-    const rw = Math.min(imgW, Math.ceil(x + w)) - rx;
-    const rh = Math.min(imgH, Math.ceil(y + h)) - ry;
-    if (rw <= 0 || rh <= 0) return;
-    const oc2 = origCanvas.getContext('2d');
-    const pixels = oc2.getImageData(rx, ry, rw, rh).data;
-    for (let ly = 0; ly < rh; ly++) {
-      for (let lx = 0; lx < rw; lx++) {
-        const li = (ly * rw + lx) * 4;
-        const [hv, sv, lv] = rgbToHsl(pixels[li] / 255, pixels[li + 1] / 255, pixels[li + 2] / 255);
-        const gi = ((ry + ly) * imgW + (rx + lx)) * 3;
-        hslBuf[gi] = hv; hslBuf[gi + 1] = sv; hslBuf[gi + 2] = lv;
-      }
-    }
-    drawOriginal();
-  }
-
   // A whole stroke (mousedown → mousemove* → mouseup) is drawn onto this
   // scratch layer first, at full alpha in normal (source-over) mode — so
   // overlapping segments within the same drag just paint the same opaque
-  // color over each other, with no visible change. The opacity/blend-mode
-  // controls are applied exactly once, when the finished layer is
-  // composited onto origCanvas in endPaint(). Without this, every segment
-  // of a slow/wiggly drag would re-blend (e.g. multiply) on top of the
-  // previous one, so a stroke could self-darken/self-multiply the longer
-  // you dragged — reported as "乗算モードで線を引くだけで色が濃くなる".
+  // color over each other, with no visible change. The per-stroke
+  // opacity/blend-mode controls are applied exactly once, when the finished
+  // stroke is composited into the paint layer (paintAccum) by
+  // commitStroke(). Without this, every segment of a slow/wiggly drag
+  // would re-blend (e.g. multiply) on top of the previous one, so a stroke
+  // could self-darken/self-multiply the longer you dragged — reported as
+  // "乗算モードで線を引くだけで色が濃くなる".
   let strokeLayerCanvas = null;
 
   function ensureStrokeLayer() {
@@ -4488,17 +4662,11 @@ function buildGIF(w, h, frames, delayCs) {
     }
   }
 
-  // Live feedback while the stroke is still in progress: show origCanvas
-  // with the in-progress layer composited on top (blend mode + opacity),
-  // without touching origCanvas itself — the real commit only happens once,
-  // in endPaint().
+  // Live feedback while the stroke is still in progress: 下絵 + (paint layer
+  // + the in-progress stroke), all at the layer's opacity/blend, without
+  // committing anything — the real commit happens once, in endPaint().
   function previewStroke() {
-    ctx.drawImage(origCanvas, 0, 0);
-    ctx.globalAlpha = paintAlpha();
-    ctx.globalCompositeOperation = paintBlendS.value;
-    ctx.drawImage(strokeLayerCanvas, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
+    compositeLayerPreview(true);
   }
 
   function startPaint(pos) {
@@ -4533,25 +4701,11 @@ function buildGIF(w, h, frames, delayCs) {
     isPainting = false;
     paintLast = null;
     snapshotForUndo();
-    const oc2 = origCanvas.getContext('2d');
-    oc2.globalAlpha = paintAlpha();
-    oc2.globalCompositeOperation = paintBlendS.value;
-    oc2.drawImage(strokeLayerCanvas, 0, 0);
-    oc2.globalAlpha = 1;
-    oc2.globalCompositeOperation = 'source-over';
-    accumulatePaintFromMask(strokeLayerCanvas);
-    // One full recompute per stroke (not per segment) — see paintClearBtn
-    // below for the same pattern on a similarly one-off operation.
-    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
-    // Detail mode renders from lowHslBuf/edgeBuf (built by decompose() from
-    // origCanvas), not hslBuf — without this, painted pixels would show up
-    // immediately in paint mode's raw preview but never in the actual noise
-    // render until detailChk was toggled off and on again to force a rebuild.
-    if (detailChk.checked) decompose();
-    drawOriginal();
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    computeImageStats();
-    updateMLResistance();
+    commitStroke();
+    // One full recompute per stroke (not per segment). rebuildOrig()
+    // regenerates origCanvas = 下絵 ⊕ layer and refreshes hslBuf / detail
+    // decomposition / stats — see paintClearBtn below for the same pattern.
+    rebuildOrig();
   }
 
   // Font size is derived from the same brush-size slider used for the pen,
@@ -4621,30 +4775,18 @@ function buildGIF(w, h, frames, delayCs) {
     const text = paintTextS.value;
     if (!text) return;
     snapshotForUndo();
-    const oc2 = origCanvas.getContext('2d');
     const fontSize = Math.max(8, (+paintSizeS.value || 6) * 4);
     const vertical = paintVerticalChk.checked;
-    // A plain full-alpha copy of the glyph shapes, built before the real
-    // (blended/translucent) draw below, so accumulatePaintFromMask() knows
-    // exactly which pixels this stamp touched regardless of blend mode.
+    // Draw the glyphs onto the scratch layer at full alpha in the real
+    // colour, then commitStroke() folds them into the paint layer
+    // with the per-stroke 不透明度/描画モード, exactly like a brush stroke.
     ensureStrokeLayer();
-    const maskCtx = strokeLayerCanvas.getContext('2d');
-    maskCtx.clearRect(0, 0, imgW, imgH);
-    maskCtx.fillStyle = '#000';
-    drawStampedText(maskCtx, text, pos.x, pos.y, fontSize, vertical);
-    oc2.globalAlpha = paintAlpha();
-    oc2.globalCompositeOperation = paintBlendS.value;
-    oc2.fillStyle = paintStrokeColor();
-    const box = drawStampedText(oc2, text, pos.x, pos.y, fontSize, vertical);
-    oc2.globalAlpha = 1;
-    oc2.globalCompositeOperation = 'source-over';
-    accumulatePaintFromMask(strokeLayerCanvas);
-    const pad = 4;
-    if (detailChk.checked) decompose(); // see the comment in endPaint() above — must run before refreshRegion()'s own drawOriginal() so that call is what ends up on screen
-    refreshRegion(box.boxX - pad, box.boxY - pad, box.boxW + pad * 2, box.boxH + pad * 2);
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    computeImageStats();
-    updateMLResistance();
+    const slc = strokeLayerCanvas.getContext('2d');
+    slc.clearRect(0, 0, imgW, imgH);
+    slc.fillStyle = paintStrokeColor();
+    drawStampedText(slc, text, pos.x, pos.y, fontSize, vertical);
+    commitStroke();
+    rebuildOrig();
   }
 
   // Dispatches a paint-mode click to whichever tool is currently selected.
@@ -4747,18 +4889,8 @@ function buildGIF(w, h, frames, delayCs) {
     }
     slc.putImageData(fillData, 0, 0);
     snapshotForUndo();
-    oc2.globalAlpha = paintAlpha();
-    oc2.globalCompositeOperation = paintBlendS.value;
-    oc2.drawImage(strokeLayerCanvas, 0, 0);
-    oc2.globalAlpha = 1;
-    oc2.globalCompositeOperation = 'source-over';
-    accumulatePaintFromMask(strokeLayerCanvas);
-    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
-    if (detailChk.checked) decompose(); // see the comment in endPaint() above
-    drawOriginal();
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    computeImageStats();
-    updateMLResistance();
+    commitStroke();
+    rebuildOrig();
   }
 
   function updatePaintToolButtons() {
@@ -4786,6 +4918,73 @@ function buildGIF(w, h, frames, delayCs) {
   });
   paintAlphaS.addEventListener('input', () => { paintAlphaV.textContent = paintAlphaS.value + '%'; });
 
+  // Layer-wide opacity / blend mode. During a slider drag only the visible
+  // canvas is recomposited (cheap); the full hslBuf recompute waits for
+  // 'change' (release) so dragging stays smooth on big images.
+  layerAlphaS.addEventListener('input', () => {
+    layerOpacity = (+layerAlphaS.value || 0) / 100;
+    layerAlphaV.textContent = layerAlphaS.value + '%';
+    if (paintMode && !isPainting) compositeLayerPreview(false);
+  });
+  layerAlphaS.addEventListener('change', () => {
+    layerOpacity = (+layerAlphaS.value || 0) / 100;
+    layerAlphaV.textContent = layerAlphaS.value + '%';
+    if (paintMode) rebuildOrig();
+  });
+  layerBlendS.addEventListener('change', () => {
+    layerBlend = layerBlendS.value;
+    if (paintMode) rebuildOrig();
+  });
+
+  // 描画先 toggle — which buffer the next stroke lands on. Free to switch
+  // back and forth mid-session; nothing is committed or lost on a switch.
+  function setPaintTarget(t) {
+    paintTarget = t;
+    syncPaintTargetUI();
+    setStatus(t === 'base' ? '描画先: 下絵' : '描画先: レイヤー');
+  }
+  paintTargetBaseBtn.addEventListener('click', () => setPaintTarget('base'));
+  paintTargetLayerBtn.addEventListener('click', () => setPaintTarget('layer'));
+
+  // "下絵と統合": composite 下絵 ⊕ baseAccum ⊕ layer(at its opacity/blend)
+  // into one flat picture, hand it back through processImage() as the new
+  // source image (exactly like ペースト does), and start with both buffers
+  // empty. The whole pre-merge state (source image, orientation, both
+  // buffers, layer opacity/blend, region polygons) is captured as a single
+  // 'merge'-kind undo entry so "元に戻す" can put it all back — until it
+  // ages out of the MAX_UNDO-deep history like any other step.
+  paintMergeBtn.addEventListener('click', () => {
+    if (!origCanvas || !pristineCanvas || colorAdjustMode) return;
+    if (nothingPainted()) { setStatus('描画がありません'); return; }
+    if (isPainting) endPaint();
+    rebuildOrig(); // make sure origCanvas reflects both buffers + layer opacity/blend
+    const mergeUndo = {
+      kind: 'merge',
+      loadedImg, loadedVideo, loadedName, videoDuration,
+      orientRotation, orientFlipH, orientFlipV,
+      orientHistory: orientHistory.slice(),
+      baseA: cloneCanvasEl(baseAccum),
+      paint: cloneCanvasEl(paintAccum),
+      lop: layerOpacity, lbl: layerBlend,
+      regionPolygons: regionPolygons.map(poly => poly.map(pt => ({ ...pt }))),
+      applyInside,
+      thumbSrc: dzThumb.style.visibility !== 'hidden' ? dzThumb.src : null,
+      thumbName: dzName.textContent || '',
+    };
+    const flat = cloneCanvasEl(origCanvas);
+    loadedImg = flat;
+    loadedVideo = null;
+    orientRotation = 0; orientFlipH = false; orientFlipV = false; orientHistory = [];
+    paintAccum = null; baseAccum = null;
+    layerOpacity = 1; layerBlend = 'source-over'; syncLayerUI();
+    processImage(flat, loadedName); // clears undoStack internally
+    undoStack = [mergeUndo];
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    paintUndoBtn.disabled = undoStack.length === 0;
+    updateLayerUIState();
+    setStatus('下絵とレイヤーを統合しました（元に戻すで戻せます）');
+  });
+
   paintEraserBtn.addEventListener('click', () => {
     paintEraser = !paintEraser;
     paintEraserBtn.style.color = paintEraser ? 'var(--accent)' : '';
@@ -4802,35 +5001,62 @@ function buildGIF(w, h, frames, delayCs) {
 
   paintUndoBtn.addEventListener('click', () => {
     if (!undoStack.length) return;
-    const { orig: snap, paint: paintSnap } = undoStack.pop();
-    const oc2 = origCanvas.getContext('2d');
-    oc2.clearRect(0, 0, imgW, imgH);
-    oc2.drawImage(snap, 0, 0);
-    if (!paintAccum) { paintAccum = document.createElement('canvas'); paintAccum.width = imgW; paintAccum.height = imgH; }
-    paintAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
-    paintAccum.getContext('2d').drawImage(paintSnap, 0, 0);
-    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
-    if (detailChk.checked) decompose(); // see the comment in endPaint() above
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    drawOriginal();
-    computeImageStats();
-    updateMLResistance();
+    const entry = undoStack.pop();
+
+    // Undo a "下絵と統合": rebuild the pre-merge state from the captured
+    // source image + orientation + both buffers, then reprocess. processImage
+    // (via reprocessWithOrientation) clears undoStack, which is fine — the
+    // merge step is the only thing that was in it.
+    if (entry.kind === 'merge') {
+      loadedImg = entry.loadedImg;
+      loadedVideo = entry.loadedVideo;
+      loadedName = entry.loadedName;
+      videoDuration = entry.videoDuration;
+      orientRotation = entry.orientRotation;
+      orientFlipH = entry.orientFlipH;
+      orientFlipV = entry.orientFlipV;
+      orientHistory = entry.orientHistory.slice();
+      baseAccum = cloneCanvasEl(entry.baseA);
+      paintAccum = cloneCanvasEl(entry.paint);
+      layerOpacity = entry.lop; layerBlend = entry.lbl; syncLayerUI();
+      regionPolygons = entry.regionPolygons.map(poly => poly.map(pt => ({ ...pt })));
+      regionPoints = [];
+      applyInside = entry.applyInside;
+      document.getElementById('applyModeBtn').textContent = applyInside ? _rgInside : _rgOutside;
+      setVideoModeRestrictions(!!loadedVideo);
+      document.getElementById('orientControls').style.display = 'block';
+      updateOrientResetBtn();
+      reprocessWithOrientation();
+      dzThumb.src = entry.thumbSrc || '';
+      dzThumb.style.visibility = entry.thumbSrc ? 'visible' : 'hidden';
+      dzName.textContent = entry.thumbName || '';
+      paintUndoBtn.disabled = undoStack.length === 0;
+      updateLayerUIState();
+      setStatus('統合を取り消しました');
+      return;
+    }
+
+    const { base: baseSnap, baseA: baseASnap, paint: paintSnap, lop, lbl } = entry;
+    if (!pristineCanvas) { pristineCanvas = document.createElement('canvas'); pristineCanvas.width = imgW; pristineCanvas.height = imgH; }
+    const restore = (dst, snap) => {
+      const g = dst.getContext('2d');
+      g.clearRect(0, 0, imgW, imgH);
+      if (snap) g.drawImage(snap, 0, 0);
+    };
+    restore(pristineCanvas, baseSnap);
+    restore(ensureAccum('base'), baseASnap);
+    restore(ensureAccum('layer'), paintSnap);
+    layerOpacity = lop; layerBlend = lbl; syncLayerUI();
+    rebuildOrig();
     paintUndoBtn.disabled = undoStack.length === 0; // stays enabled while more undo steps remain
   });
 
   paintClearBtn.addEventListener('click', () => {
     if (!pristineCanvas || !origCanvas) return;
     snapshotForUndo();
-    const oc2 = origCanvas.getContext('2d');
-    oc2.clearRect(0, 0, imgW, imgH);
-    oc2.drawImage(pristineCanvas, 0, 0);
+    if (baseAccum) baseAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
     if (paintAccum) paintAccum.getContext('2d').clearRect(0, 0, imgW, imgH);
-    hslBuf = computeHslBuf(oc2.getImageData(0, 0, imgW, imgH).data, imgW, imgH);
-    if (detailChk.checked) decompose(); // see the comment in endPaint() above
-    origImageData = oc2.getImageData(0, 0, imgW, imgH);
-    drawOriginal();
-    computeImageStats();
-    updateMLResistance();
+    rebuildOrig();
   });
 
   // Saves the drawing itself (origCanvas — pre-noise, whatever's actually
@@ -4871,7 +5097,8 @@ function buildGIF(w, h, frames, delayCs) {
     loadedVideo = null;
     loadedName = 'コピーした画像';
     orientRotation = 0; orientFlipH = false; orientFlipV = false; orientHistory = [];
-    paintAccum = null;
+    paintAccum = null; baseAccum = null;
+    layerOpacity = 1; layerBlend = 'source-over'; syncLayerUI();
     document.getElementById('videoModeNotice').style.display = 'none';
     setVideoModeRestrictions(false);
     document.getElementById('orientControls').style.display = 'block';
@@ -4897,6 +5124,9 @@ function buildGIF(w, h, frames, delayCs) {
       if (playing) stopPlay();
       sswChk.disabled = true; sswPeriodS.disabled = true; sswScaleS.disabled = true;
       paintControls.style.display = 'flex';
+      syncLayerUI();
+      syncPaintTargetUI();
+      updateLayerUIState();
       resetPaintView(); // start each paint session at 1:1 rather than resuming wherever the last one left off
       if (hslBuf) drawOriginal();
     } else {
@@ -4980,13 +5210,29 @@ function buildGIF(w, h, frames, delayCs) {
     return cc;
   }
 
+  // Deep-copies one undo entry for panel snapshot/restore. A normal entry is
+  // all canvas snapshots + scalars; a 'merge' entry also carries an immutable
+  // source-image ref and orientation fields (spread through as-is).
+  function cloneUndoEntry(u) {
+    if (u.kind === 'merge') {
+      return { ...u,
+        baseA: cloneCanvasEl(u.baseA),
+        paint: cloneCanvasEl(u.paint),
+        orientHistory: u.orientHistory.slice(),
+        regionPolygons: u.regionPolygons.map(poly => poly.map(pt => ({ ...pt }))) };
+    }
+    return { base: cloneCanvasEl(u.base), baseA: cloneCanvasEl(u.baseA), paint: cloneCanvasEl(u.paint), lop: u.lop, lbl: u.lbl };
+  }
+
   function snapshotIntoPanel(index) {
     panels[index] = {
       loadedImg, loadedVideo, loadedName, videoDuration,
       orientRotation, orientFlipH, orientFlipV,
       orientHistory: orientHistory.slice(),
+      baseAccum: cloneCanvasEl(baseAccum),
       paintAccum: cloneCanvasEl(paintAccum),
-      undoStack: undoStack.map(u => ({ orig: cloneCanvasEl(u.orig), paint: cloneCanvasEl(u.paint) })),
+      layerOpacity, layerBlend,
+      undoStack: undoStack.map(cloneUndoEntry),
       regionPolygons: regionPolygons.map(poly => poly.map(pt => ({ ...pt }))),
       applyInside,
       thumbSrc: dzThumb.style.visibility !== 'hidden' ? dzThumb.src : null,
@@ -5000,7 +5246,8 @@ function buildGIF(w, h, frames, delayCs) {
     stopAll();
     if (!p) {
       orientRotation = 0; orientFlipH = false; orientFlipV = false; orientHistory = [];
-      paintAccum = null;
+      paintAccum = null; baseAccum = null;
+      layerOpacity = 1; layerBlend = 'source-over';
       undoStack = [];
       regionPoints = []; regionPolygons = []; regionMask = null; applyInside = false;
       document.getElementById('applyModeBtn').textContent = _rgOutside;
@@ -5017,7 +5264,10 @@ function buildGIF(w, h, frames, delayCs) {
       orientFlipH = p.orientFlipH;
       orientFlipV = p.orientFlipV;
       orientHistory = p.orientHistory.slice();
+      baseAccum = cloneCanvasEl(p.baseAccum);
       paintAccum = cloneCanvasEl(p.paintAccum);
+      layerOpacity = (p.layerOpacity != null) ? p.layerOpacity : 1;
+      layerBlend = p.layerBlend || 'source-over';
       regionPolygons = p.regionPolygons.map(poly => poly.map(pt => ({ ...pt })));
       regionPoints = [];
       applyInside = p.applyInside;
@@ -5026,7 +5276,7 @@ function buildGIF(w, h, frames, delayCs) {
       document.getElementById('orientControls').style.display = 'block';
       updateOrientResetBtn();
       reprocessWithOrientation();
-      undoStack = p.undoStack.map(u => ({ orig: cloneCanvasEl(u.orig), paint: cloneCanvasEl(u.paint) }));
+      undoStack = p.undoStack.map(cloneUndoEntry);
       paintUndoBtn.disabled = undoStack.length === 0;
       dzThumb.src = p.thumbSrc || '';
       dzThumb.style.visibility = p.thumbSrc ? 'visible' : 'hidden';
