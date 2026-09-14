@@ -259,6 +259,22 @@
       display: none;
       white-space: nowrap;
     }
+    /* Sits higher than .resize-size-label (bottom:22px) so the two never
+       overlap on the rare occasion someone resizes the pane while also
+       zoomed in during paint mode. */
+    .zoom-indicator {
+      position: absolute;
+      right: 6px; bottom: 40px;
+      background: rgba(0,0,0,0.65);
+      color: #fff;
+      font-size: 0.68rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      pointer-events: none;
+      z-index: 6;
+      display: none;
+      white-space: nowrap;
+    }
     /* Wraps mainCanvas+regionOverlay so paint mode's pan/zoom (a CSS
        transform on this element, applied by JS — see "Paint view pan/zoom"
        below) moves both together as one rigid unit. Left at the exact same
@@ -1334,6 +1350,7 @@
       <div class="badge" id="badge"></div>
       <div class="resize-grip" id="resizeGrip" title="ドラッグでプレビューの大きさを変更"></div>
       <div class="resize-size-label" id="resizeSizeLabel"></div>
+      <div class="zoom-indicator" id="paintZoomLabel"></div>
       </div>
       <div style="display:flex;gap:7px;margin-top:2px;">
         <button class="btn btn-blue" id="playBtn" disabled style="flex:1;">▶ 再生</button>
@@ -1355,9 +1372,9 @@
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <input type="color" id="paintColorS" value="#000000" style="width:32px;height:28px;padding:0;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:none;">
           <div style="display:flex;align-items:center;gap:6px;">
-            <label style="font-size:12px;color:var(--muted);">太さ</label>
-            <input type="range" id="paintSizeS" min="1" max="60" value="6" style="width:80px;">
-            <em id="paintSizeV" style="font-style:normal;font-size:12px;">6px</em>
+            <label style="font-size:12px;color:var(--muted);">ペンの太さ</label>
+            <input type="range" id="paintSizeS" min="1" max="60" value="2" style="width:80px;">
+            <em id="paintSizeV" style="font-style:normal;font-size:12px;">2px</em>
           </div>
           <div style="display:flex;align-items:center;gap:6px;">
             <label style="font-size:12px;color:var(--muted);">不透明度</label>
@@ -1371,6 +1388,11 @@
             <option value="lighten">明るい色優先</option>
           </select>
           <button type="button" class="btn btn-gray" id="paintEraserBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">消しゴム</button>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--muted);">消しゴムの太さ</label>
+            <input type="range" id="paintEraserSizeS" min="1" max="60" value="15" style="width:80px;">
+            <em id="paintEraserSizeV" style="font-style:normal;font-size:12px;">15px</em>
+          </div>
           <button type="button" class="btn btn-gray" id="paintEyedropBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🎨 スポイト</button>
           <button type="button" class="btn btn-gray" id="paintFillBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🪣 塗りつぶし</button>
           <button type="button" class="btn btn-gray" id="paintUndoBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">↩ 元に戻す</button>
@@ -1378,7 +1400,7 @@
           <button type="button" class="btn btn-gray" id="paintSaveBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">💾 画像を保存</button>
           <button type="button" class="btn btn-gray" id="paintCopyBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">📋 コピー</button>
           <button type="button" class="btn btn-gray" id="paintPasteBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">📥 ペースト</button>
-          <button type="button" class="btn btn-gray" id="paintViewResetBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔍 表示リセット</button>
+          <button type="button" class="btn btn-gray" id="paintViewResetBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔍 拡大リセット</button>
         </div>
         <div style="font-size:10px;color:#777;line-height:1.4;">コピーで今のコマの絵を記憶し、別のコマに切り替えてからペーストすると貼り付けられます。PC: マウスホイールで拡大縮小、右クリックドラッグで移動。スマホ: 2本指ピンチで拡大縮小、2本指スライドで移動。</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:8px;">
@@ -1395,13 +1417,18 @@
             <option value="lighten">明るい色優先</option>
           </select>
           <button type="button" class="btn btn-gray" id="paintMergeBtn" disabled style="padding:5px 10px;font-size:12px;min-height:auto;">🔽 下絵と統合</button>
-          <span style="font-size:10px;color:#777;line-height:1.4;flex-basis:100%;">お絵描き場所は下絵またはレイヤーが選択できます。上の不透明度・描画モードはレイヤー全体にかかり、あとから変更できます。「下絵と統合」でレイヤーを絵に焼き込みます(統合すると消しゴムで消せなくなります。)</span>
+          <span style="font-size:10px;color:#777;line-height:1.4;flex-basis:100%;">お絵描き場所は下絵またはレイヤーが選択できます。上の不透明度・描画モードはレイヤー全体にかかり、あとから変更できます。「下絵と統合」でレイヤーを絵に焼き込みます。</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <textarea id="paintTextS" placeholder="テキストを入力（改行可）" maxlength="100" rows="2" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:inherit;resize:vertical;"></textarea>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;color:var(--muted);">
             <input type="checkbox" id="paintVerticalChk" style="width:13px;height:13px">縦書き
           </label>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--muted);">文字の大きさ</label>
+            <input type="range" id="paintTextSizeS" min="8" max="200" value="24" style="width:80px;">
+            <em id="paintTextSizeV" style="font-style:normal;font-size:12px;">24px</em>
+          </div>
           <button type="button" class="btn btn-gray" id="paintTextModeBtn" style="padding:5px 10px;font-size:12px;min-height:auto;">🔤 文字を置く</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:8px;">
@@ -3449,7 +3476,7 @@ function buildGIF(w, h, frames, delayCs) {
     const cr = canvas.getBoundingClientRect();
     const or = overlay.getBoundingClientRect();
     const scale = cr.width / imgW * overlay.width / or.width;
-    const r = Math.max(2, (+paintSizeS.value || 6) / 2 * scale);
+    const r = Math.max(2, paintBrushSize() / 2 * scale);
     octx.save();
     octx.lineWidth = 1;
     octx.setLineDash([4, 3]);
@@ -3679,11 +3706,20 @@ function buildGIF(w, h, frames, delayCs) {
   // already derives everything from getBoundingClientRect(), which reflects
   // CSS transforms automatically, so none of them needed to change for this.
   const paintViewport = document.getElementById('paintViewport');
+  const paintZoomLabel = document.getElementById('paintZoomLabel');
   let paintZoom = 1, paintPanX = 0, paintPanY = 0;
   const PAINT_ZOOM_MIN = 1, PAINT_ZOOM_MAX = 8;
 
   function applyPaintTransform() {
     paintViewport.style.transform = `translate(${paintPanX}px, ${paintPanY}px) scale(${paintZoom})`;
+    // Only worth telling the user about once they're actually zoomed in —
+    // at 100% it would just be one more label cluttering the corner.
+    if (paintZoom > 1) {
+      paintZoomLabel.textContent = `拡大中 ${Math.round(paintZoom * 100)}%`;
+      paintZoomLabel.style.display = 'block';
+    } else {
+      paintZoomLabel.style.display = 'none';
+    }
   }
   function resetPaintView() {
     paintZoom = 1; paintPanX = 0; paintPanY = 0;
@@ -4439,6 +4475,10 @@ function buildGIF(w, h, frames, delayCs) {
   const paintColorS    = document.getElementById('paintColorS');
   const paintSizeS     = document.getElementById('paintSizeS');
   const paintSizeV     = document.getElementById('paintSizeV');
+  const paintEraserSizeS = document.getElementById('paintEraserSizeS');
+  const paintEraserSizeV = document.getElementById('paintEraserSizeV');
+  const paintTextSizeS = document.getElementById('paintTextSizeS');
+  const paintTextSizeV = document.getElementById('paintTextSizeV');
   const paintAlphaS    = document.getElementById('paintAlphaS');
   const paintAlphaV    = document.getElementById('paintAlphaV');
   const paintBlendS    = document.getElementById('paintBlendS');
@@ -4477,7 +4517,7 @@ function buildGIF(w, h, frames, delayCs) {
   const _eraserOff = '消しゴム';
   const _eraserOn  = '✓ 消しゴム';
   let paintMode = false, isPainting = false, paintLast = null, paintEraser = false;
-  let paintTarget = 'layer'; // 'layer' → strokes go on paintAccum; 'base' → on baseAccum (the 下絵)
+  let paintTarget = 'base'; // 'layer' → strokes go on paintAccum; 'base' → on baseAccum (the 下絵)
   // Which click-driven tool is active — 'brush' draws strokes (the default,
   // handled by startPaint/movePaint/endPaint below); the other three are
   // single-purpose click tools that never drag. Mutually exclusive by
@@ -4563,7 +4603,8 @@ function buildGIF(w, h, frames, delayCs) {
     const c = ensureAccum(paintTarget);
     const cx2 = c.getContext('2d');
     cx2.globalAlpha = paintAlpha();
-    cx2.globalCompositeOperation = paintEraser ? 'destination-out' : paintBlendS.value;
+    cx2.globalCompositeOperation = (paintEraser && paintTarget === 'base') ? 'source-over'
+      : paintEraser ? 'destination-out' : paintBlendS.value;
     cx2.drawImage(strokeLayerCanvas, 0, 0);
     cx2.globalAlpha = 1;
     cx2.globalCompositeOperation = 'source-over';
@@ -4616,9 +4657,10 @@ function buildGIF(w, h, frames, delayCs) {
   function compositeLayerPreview(withStroke) {
     if (!pristineCanvas) return;
     ensurePreviewCanvases();
-    const applyStroke = (g) => {
+    const applyStroke = (g, isBase) => {
       g.globalAlpha = paintAlpha();
-      g.globalCompositeOperation = paintEraser ? 'destination-out' : paintBlendS.value;
+      g.globalCompositeOperation = (paintEraser && isBase) ? 'source-over'
+        : paintEraser ? 'destination-out' : paintBlendS.value;
       g.drawImage(strokeLayerCanvas, 0, 0);
       g.globalAlpha = 1;
       g.globalCompositeOperation = 'source-over';
@@ -4626,12 +4668,12 @@ function buildGIF(w, h, frames, delayCs) {
     const ba = previewBaseAccumCanvas.getContext('2d');
     ba.clearRect(0, 0, imgW, imgH);
     if (baseAccum) ba.drawImage(baseAccum, 0, 0);
-    if (withStroke && strokeLayerCanvas && paintTarget === 'base') applyStroke(ba);
+    if (withStroke && strokeLayerCanvas && paintTarget === 'base') applyStroke(ba, true);
 
     const lg = previewLayerCanvas.getContext('2d');
     lg.clearRect(0, 0, imgW, imgH);
     if (paintAccum) lg.drawImage(paintAccum, 0, 0);
-    if (withStroke && strokeLayerCanvas && paintTarget === 'layer') applyStroke(lg);
+    if (withStroke && strokeLayerCanvas && paintTarget === 'layer') applyStroke(lg, false);
 
     ctx.clearRect(0, 0, imgW, imgH);
     ctx.drawImage(pristineCanvas, 0, 0);
@@ -4745,7 +4787,7 @@ function buildGIF(w, h, frames, delayCs) {
   // each already tracks whether it has anything to undo/reset independent
   // of this session.
   function setAdjustToolsDisabled(disabled) {
-    [paintColorS, paintSizeS, paintAlphaS, paintBlendS, paintEraserBtn, paintEyedropBtn, paintFillBtn,
+    [paintColorS, paintSizeS, paintEraserSizeS, paintTextSizeS, paintAlphaS, paintBlendS, paintEraserBtn, paintEyedropBtn, paintFillBtn,
      paintTextS, paintVerticalChk, paintTextModeBtn, paintClearBtn, paintSaveBtn, paintCopyBtn,
      layerAlphaS, layerBlendS, paintTargetBaseBtn, paintTargetLayerBtn].forEach(el => { el.disabled = disabled; });
     paintMergeBtn.disabled = disabled || nothingPainted();
@@ -4832,6 +4874,9 @@ function buildGIF(w, h, frames, delayCs) {
 
   function paintStrokeColor() { return paintEraser ? '#ffffff' : paintColorS.value; }
   function paintAlpha() { return (+paintAlphaS.value || 100) / 100; }
+  // Pen and eraser keep independent thickness settings (separate sliders);
+  // this picks whichever one applies to the stroke about to be drawn.
+  function paintBrushSize() { return paintEraser ? (+paintEraserSizeS.value || 15) : (+paintSizeS.value || 2); }
 
   // A whole stroke (mousedown → mousemove* → mouseup) is drawn onto this
   // scratch layer first, at full alpha in normal (source-over) mode — so
@@ -4852,6 +4897,16 @@ function buildGIF(w, h, frames, delayCs) {
     }
   }
 
+  // Eraser on 下絵 (base) paints opaque white instead of punching a
+  // transparent hole — baseAccum sits over pristineCanvas (the uploaded
+  // photo), so a transparent hole there would reveal the photo underneath,
+  // not erase it. Layer eraser keeps the old destination-out behaviour
+  // (transparent, revealing 下絵). No recolor step needed: paintStrokeColor()
+  // already fills strokeLayerCanvas with white whenever paintEraser is on
+  // (see startPaint/movePaint/stampText/doFill), so a plain source-over
+  // drawImage of it is exactly the same shape/size/antialiasing as a normal
+  // stroke, just already the right colour.
+
   // Live feedback while the stroke is still in progress: 下絵 + (paint layer
   // + the in-progress stroke), all at the layer's opacity/blend, without
   // committing anything — the real commit happens once, in endPaint().
@@ -4868,7 +4923,7 @@ function buildGIF(w, h, frames, delayCs) {
     slc.clearRect(0, 0, imgW, imgH);
     slc.fillStyle = paintStrokeColor();
     slc.beginPath();
-    slc.arc(pos.x, pos.y, (+paintSizeS.value || 6) / 2, 0, 6.2831853);
+    slc.arc(pos.x, pos.y, paintBrushSize() / 2, 0, 6.2831853);
     slc.fill();
     previewStroke();
   }
@@ -4876,7 +4931,7 @@ function buildGIF(w, h, frames, delayCs) {
     if (!isPainting) return;
     const slc = strokeLayerCanvas.getContext('2d');
     slc.strokeStyle = paintStrokeColor();
-    slc.lineWidth = +paintSizeS.value || 6;
+    slc.lineWidth = paintBrushSize();
     slc.lineCap = 'round';
     slc.lineJoin = 'round';
     slc.beginPath();
@@ -4898,9 +4953,9 @@ function buildGIF(w, h, frames, delayCs) {
     rebuildOrig();
   }
 
-  // Font size is derived from the same brush-size slider used for the pen,
-  // rather than adding a second slider, to keep the toolbar minimal — a
-  // basic-tools scope call, same as skipping a dedicated eraser radius.
+  // Font size has its own slider (paintTextSizeS), independent of the pen/
+  // eraser thickness sliders — the three tools' sizes are unrelated in
+  // practice (readable text needs a much bigger number than a fine brush).
   // Vertical writing (縦書き) is simulated by stacking characters top-to-
   // bottom one at a time — canvas has no native vertical text layout, and
   // fillText() always draws a glyph in its horizontal orientation regardless
@@ -4965,7 +5020,7 @@ function buildGIF(w, h, frames, delayCs) {
     const text = paintTextS.value;
     if (!text) return;
     snapshotForUndo();
-    const fontSize = Math.max(8, (+paintSizeS.value || 6) * 4);
+    const fontSize = +paintTextSizeS.value || 24;
     const vertical = paintVerticalChk.checked;
     // Draw the glyphs onto the scratch layer at full alpha in the real
     // colour, then commitStroke() folds them into the paint layer
@@ -5104,8 +5159,13 @@ function buildGIF(w, h, frames, delayCs) {
 
   paintSizeS.addEventListener('input', () => {
     paintSizeV.textContent = paintSizeS.value + 'px';
-    if (paintMode) drawRegionOverlay(); // resize the brush cursor circle immediately, without waiting for the next mousemove
+    if (paintMode && !paintEraser) drawRegionOverlay(); // resize the brush cursor circle immediately, without waiting for the next mousemove
   });
+  paintEraserSizeS.addEventListener('input', () => {
+    paintEraserSizeV.textContent = paintEraserSizeS.value + 'px';
+    if (paintMode && paintEraser) drawRegionOverlay();
+  });
+  paintTextSizeS.addEventListener('input', () => { paintTextSizeV.textContent = paintTextSizeS.value + 'px'; });
   paintAlphaS.addEventListener('input', () => { paintAlphaV.textContent = paintAlphaS.value + '%'; });
 
   // Layer-wide opacity / blend mode. During a slider drag only the visible
@@ -5179,6 +5239,7 @@ function buildGIF(w, h, frames, delayCs) {
     paintEraser = !paintEraser;
     paintEraserBtn.style.color = paintEraser ? 'var(--accent)' : '';
     paintEraserBtn.textContent = paintEraser ? _eraserOn : _eraserOff;
+    if (paintMode) drawRegionOverlay(); // brush cursor circle switches to the eraser's own size immediately
   });
 
   // Stays on until toggled off (like the eraser) so several words/labels
